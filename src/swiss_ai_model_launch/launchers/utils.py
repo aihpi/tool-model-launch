@@ -20,13 +20,27 @@ MODEL_REGISTRY = Path("/capstor/store/cscs/swissai/infra01/hf_models/models/")
 _FIRECREST_RETRY_DELAYS_SEC: tuple[float, ...] = (1.0, 2.0, 4.0, 8.0, 16.0)
 
 
-def _is_firecrest_retryable(exc: BaseException) -> bool:
-    if isinstance(exc, f7t.UnexpectedStatusException):
-        try:
-            status = exc.responses[-1].status_code
-        except (AttributeError, IndexError):
-            return False
-        return bool(500 <= status < 600)
+# 408 is what FirecREST answers when its own SSH command to the cluster
+# times out ("Command execution timeout limit exceeded"); 429 is throttling.
+# Both are as transient as a 5xx.
+_RETRYABLE_STATUSES = frozenset({408, 429})
+
+
+def firecrest_status(exc: BaseException) -> int | None:
+    """HTTP status of the FirecREST response behind ``exc``, if it carries one."""
+    if not isinstance(exc, f7t.UnexpectedStatusException):
+        return None
+    try:
+        return int(exc.responses[-1].status_code)
+    except (AttributeError, IndexError, TypeError, ValueError):
+        return None
+
+
+def is_firecrest_retryable(exc: BaseException) -> bool:
+    """Whether a failed FirecREST call may be retried (transient error)."""
+    status = firecrest_status(exc)
+    if status is not None:
+        return status in _RETRYABLE_STATUSES or 500 <= status < 600
     return isinstance(exc, httpx.HTTPError)
 
 
@@ -34,14 +48,18 @@ async def call_with_firecrest_retry(make_call: Callable[[], Awaitable[_T]]) -> _
     """Invoke ``make_call()`` with retries on transient FirecREST errors.
 
     Retries up to 5 times with exponential backoff (1s, 2s, 4s, 8s, 16s) on
-    FirecREST 5xx responses and httpx transport errors. Other exceptions
-    propagate immediately.
+    FirecREST 5xx/408/429 responses and httpx transport errors. Other
+    exceptions propagate immediately.
+
+    Not for job submission: a retried sbatch may duplicate a job FirecREST
+    did run despite the error. Launchers submit through
+    ``Launcher._submit_or_adopt`` instead.
     """
     for attempt in range(len(_FIRECREST_RETRY_DELAYS_SEC) + 1):
         try:
             return await make_call()
         except Exception as exc:
-            if not _is_firecrest_retryable(exc) or attempt == len(_FIRECREST_RETRY_DELAYS_SEC):
+            if not is_firecrest_retryable(exc) or attempt == len(_FIRECREST_RETRY_DELAYS_SEC):
                 raise
             await asyncio.sleep(_FIRECREST_RETRY_DELAYS_SEC[attempt])
     raise AssertionError("unreachable")  # pragma: no cover

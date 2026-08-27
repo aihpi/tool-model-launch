@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import shlex
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -16,7 +18,7 @@ from swiss_ai_model_launch.launchers.launch_args import (
 )
 from swiss_ai_model_launch.launchers.launch_request import LaunchRequest
 from swiss_ai_model_launch.launchers.model_catalog_entry import ModelCatalogEntry
-from swiss_ai_model_launch.launchers.utils import MODEL_REGISTRY, resolve_model_path
+from swiss_ai_model_launch.launchers.utils import MODEL_REGISTRY, is_firecrest_retryable, resolve_model_path
 
 if TYPE_CHECKING:
     from swiss_ai_model_launch.cli.healthcheck import ReplicaHealthReport
@@ -99,12 +101,14 @@ class Launcher(ABC):
         """Where ``entry``'s weights live on this launcher's cluster."""
         return resolve_model_path(entry.model, self.model_registry, entry.model_path)
 
-    async def list_dir(self, path: str) -> list[str] | None:
-        """Entry names in ``path``, or ``None`` if it doesn't exist or can't be read.
+    async def path_exists(self, path: str) -> bool:
+        """Whether ``path`` exists and this account can reach it.
 
-        Used by the catalog path check to confirm a model directory is still
-        there before a launch discovers it isn't. Overridden by launchers that
-        can reach the cluster filesystem.
+        A single ``stat`` — never a listing, which on a directory of a few
+        hundred weight shards can outlast FirecREST's command timeout. Used by
+        the catalog path check to confirm a model directory is still there
+        before a launch discovers it isn't. Overridden by launchers that can
+        reach the cluster filesystem.
         """
         raise NotImplementedError
 
@@ -208,6 +212,45 @@ class Launcher(ABC):
 
     @abstractmethod
     async def get_job_status(self, job_id: int) -> JobStatus: ...
+
+    async def find_job(self, job_name: str) -> tuple[int, JobStatus] | None:
+        """A job of ours with this exact name that is still pending or running,
+        as (job_id, status), or None. The basis of idempotent submission.
+        Launchers that cannot look a job up by name fall back to plain retries."""
+        return None
+
+    async def _submit_or_adopt(
+        self,
+        job_name: str,
+        submit: Callable[[], Awaitable[int]],
+        delays: Sequence[float] = (10.0, 15.0, 22.5, 34.0, 51.0),
+    ) -> int:
+        """Submit a job named ``job_name`` at most once.
+
+        FirecREST can report an error (5xx, 408) for an sbatch that actually
+        went through, so a naive retry would allocate a second job. After a
+        transient error this waits -- FirecREST's own command timeout is about
+        10s, and the scheduler needs a moment to list a job that did get
+        through -- then looks the job up by name and adopts it if it exists;
+        only otherwise is the submission retried, with the wait growing by
+        1.5x each time. Non-transient errors propagate at once.
+        """
+        for attempt in range(len(delays) + 1):
+            try:
+                return await submit()
+            except Exception as exc:
+                if not is_firecrest_retryable(exc):
+                    raise
+                await asyncio.sleep(delays[min(attempt, len(delays) - 1)])
+                try:
+                    found = await self.find_job(job_name)
+                except Exception:  # the lookup itself hit the same outage
+                    found = None
+                if found is not None:
+                    return found[0]
+                if attempt == len(delays):
+                    raise
+        raise RuntimeError("unreachable")  # pragma: no cover
 
     async def get_job_times(self, job_id: int) -> tuple[str | None, str | None]:
         """The job's ``(start, end)`` wall-clock times as display strings.

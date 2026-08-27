@@ -16,7 +16,7 @@ dependencies = [
   "keyring>=25.0",
   "keyrings.alt>=5.0",
   "pydantic>=2.0",
-  "pyfirecrest>=3.7.1",
+  "pyfirecrest>=3.9.0",
   "pyyaml>=6.0",
   "questionary>=2.0",
   "textual>=8.1",
@@ -38,6 +38,8 @@ line_length = 120
 [tool.ruff]
 src = ["src"]
 line-length = 120
+# Prose, not code: ruff would otherwise reformat python snippets in the docs.
+extend-exclude = ["docs"]
 
 [tool.ruff.lint]
 select = [

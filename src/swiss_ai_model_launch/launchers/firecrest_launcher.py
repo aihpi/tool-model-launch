@@ -19,9 +19,14 @@ from swiss_ai_model_launch.launchers.utils import (
     call_with_firecrest_retry,
     create_salt,
     decode_log,
+    firecrest_status,
     render_sbatch_header,
     resolve_model_path,
 )
+
+# FirecREST's stat answers: 404 for "No such file or directory", 403 for
+# "Permission denied". Only these mean the path itself is unreachable.
+_PATH_UNREACHABLE_STATUSES = frozenset({403, 404})
 
 _SGLANG_ENVIRONMENT = files("swiss_ai_model_launch.assets.envs").joinpath("sglang.toml")
 _VLLM_ENVIRONMENT = files("swiss_ai_model_launch.assets.envs").joinpath("vllm.toml")
@@ -115,7 +120,7 @@ class FirecRESTLauncher(Launcher):
         launch_request: LaunchRequest,
     ) -> LaunchArgs:
         model = launch_request.model
-        job_name = f"{model.replace('/', '_')}_{self.username}_{create_salt(8)}"
+        job_name = launch_request.job_name or f"{model.replace('/', '_')}_{self.username}_{create_salt(8)}"
         served_model_name = namespace_served_model_name(launch_request.served_model_name or model, self.username)
         return LaunchArgs(
             job_name=job_name,
@@ -188,17 +193,18 @@ class FirecRESTLauncher(Launcher):
         remote_env_path = await self._upload_env_file(launch_args.environment, launch_args.framework)
         return launch_args.model_copy(update={"environment": remote_env_path})
 
+    async def _submit_script(self, script_str: str) -> int:
+        report = await self.client.submit(
+            system_name=self.system_name,
+            working_dir=self._get_working_dir(),
+            script_str=script_str,
+            account=self.account,
+        )
+        return int(report["jobId"])
+
     async def _submit_one(self, launch_args: LaunchArgs) -> int:
         script_str = render_sbatch_header(launch_args, reservation=self.reservation) + render_master(launch_args)
-        job_submission_report = await call_with_firecrest_retry(
-            lambda: self.client.submit(
-                system_name=self.system_name,
-                working_dir=self._get_working_dir(),
-                script_str=script_str,
-                account=self.account,
-            )
-        )
-        return int(job_submission_report["jobId"])
+        return await self._submit_or_adopt(launch_args.job_name, lambda: self._submit_script(script_str))
 
     async def launch_with_args(self, launch_args: LaunchArgs) -> tuple[int, str]:
         prepared = await self._prepare_launch_args(launch_args)
@@ -223,10 +229,10 @@ class FirecRESTLauncher(Launcher):
             except (FileNotFoundError, f7t.FirecrestException):
                 return None
 
-    async def list_dir(self, path: str) -> list[str] | None:
+    async def path_exists(self, path: str) -> bool:
         try:
-            listing = await call_with_firecrest_retry(
-                lambda: self.client.list_files(
+            await call_with_firecrest_retry(
+                lambda: self.client.stat(
                     system_name=self.system_name,
                     path=path,
                     # Model directories are often symlinks into another tree; report
@@ -234,9 +240,16 @@ class FirecRESTLauncher(Launcher):
                     dereference=True,
                 )
             )
-        except (FileNotFoundError, f7t.FirecrestException):
-            return None
-        return [str(item["name"]) for item in listing]
+        except f7t.UnexpectedStatusException as exc:
+            # FirecREST turns stat's "No such file or directory" into 404 and
+            # "Permission denied" into 403 — both are verdicts on the path.
+            # Anything else (408 command timeout, 5xx that outlived the
+            # retries, ...) says nothing about the path, so it propagates
+            # rather than masquerading as a missing file.
+            if firecrest_status(exc) in _PATH_UNREACHABLE_STATUSES:
+                return False
+            raise
+        return True
 
     async def get_preconfigured_models(self) -> list[ModelCatalogEntry]:
         return [ModelCatalogEntry(**item) for item in json.loads(_PRECONFIGURED_MODELS.read_text())]
@@ -251,17 +264,20 @@ class FirecRESTLauncher(Launcher):
             )
         )
 
-        script_str = render_sbatch_header(launch_args, reservation=self.reservation) + render_master(launch_args)
-        job_submission_report = await call_with_firecrest_retry(
-            lambda: self.client.submit(
-                system_name=self.system_name,
-                working_dir=self._get_working_dir(),
-                script_str=script_str,
-                account=self.account,
-            )
-        )
+        job_id = await self._submit_one(launch_args)
+        return job_id, launch_args.served_model_name
 
-        return int(job_submission_report["jobId"]), launch_args.served_model_name
+    async def find_job(self, job_name: str) -> tuple[int, JobStatus] | None:
+        # The account's jobs, matched by name here: FirecREST's own `name`
+        # filter needs API >= 2.6, which CSCS does not run yet.
+        jobs = await call_with_firecrest_retry(lambda: self.client.job_info(system_name=self.system_name))
+        for job in jobs:
+            if job.get("name") != job_name:
+                continue
+            status = JobStatus.from_str(str((job.get("status") or {}).get("state", "")))
+            if status in (JobStatus.PENDING, JobStatus.RUNNING):
+                return int(job["jobId"]), status
+        return None
 
     async def get_job_status(self, job_id: int) -> JobStatus:
         job_info = await call_with_firecrest_retry(
