@@ -33,6 +33,10 @@ _DCGM_COUNTERS = f"{_METRICS_CONFIG_DIR}/default-counters.csv"
 # In-job replica health checker (its source is embedded into master.sh and run on
 # the batch node). OpenTela serves its HTTP API (incl. /v1/self) on port 8092.
 _HEALTH_CHECKER_TEXT = files("swiss_ai_model_launch.assets").joinpath("replica_health_checker.py").read_text()
+# GPU pool agent (framework "pool"): materialised into $RANKS_DIR with the rank
+# scripts and run inside the container as the framework process.
+_POOL_AGENT_FILENAME = "pool_agent.py"
+_POOL_AGENT_TEXT = files("swiss_ai_model_launch.assets").joinpath(_POOL_AGENT_FILENAME).read_text()
 _HEALTH_CHECKER_HEREDOC = "__SML_HEALTH_CHECKER_EOF__"
 _OPENTELA_HTTP_PORT = 8092
 _HEALTH_INTERVAL_SECONDS = 30
@@ -69,7 +73,18 @@ class Vllm(Framework):
     ]
 
 
-_FRAMEWORKS: dict[str, type[Framework]] = {"sglang": Sglang, "vllm": Vllm}
+class Pool(Framework):
+    """Several vLLM servers sharing the node's GPUs via sleep mode behind one
+    OpenAI-compatible front door; see assets/pool_agent.py and docs/gpu-pool.md."""
+
+    name = "pool"
+    # $RANKS_DIR is not exported into the srun step, so spell the path out. No
+    # quotes: it ends up inside OpenTela's --subprocess "..." (and has no spaces).
+    entrypoint = f"python3 $HOME/.sml/job-${{SLURM_JOB_ID}}/{_POOL_AGENT_FILENAME}"
+    env_exports = [*Vllm.env_exports, "export VLLM_SERVER_DEV_MODE=1"]  # sleep/wake endpoints
+
+
+_FRAMEWORKS: dict[str, type[Framework]] = {"sglang": Sglang, "vllm": Vllm, "pool": Pool}
 
 
 def _make_framework(name: str) -> Framework:
@@ -340,6 +355,17 @@ def _render_vllm_head(launch_args: LaunchArgs, framework: Framework) -> str:
     else:
         launch = 'bash "$ray_head_script"'
     return f"{pre}\n\n{body_args}\n{head_script_body}\n\n{launch}\n"
+
+
+def _render_pool_head(launch_args: LaunchArgs, framework: Framework) -> str:
+    # Single node, no Ray: the agent is the API server. --port is injected by
+    # _compose_framework_args; the user's framework_args carry --config.
+    args = _compose_framework_args(launch_args)
+    pre = _shebang_and_setup(framework, launch_args)
+    body_args = '# shellcheck disable=SC2034\nreplica_head_ip="$1"\n'
+    cmd = f"{framework.entrypoint} {args}"
+    launch = cmd if launch_args.disable_opentela else _opentela_wrap_head(cmd, launch_args)
+    return f"{pre}\n\n{body_args}\n{launch}\n"
 
 
 def _render_vllm_follower(launch_args: LaunchArgs, framework: Framework) -> str:
@@ -863,7 +889,7 @@ def _render_self_extracting_ranks(rank_scripts: dict[str, str]) -> str:
         'mkdir -p "$RANKS_DIR"',
     ]
     for filename, content in rank_scripts.items():
-        delim = f"__SML_{filename.replace('.sh', '').upper()}_EOF__"
+        delim = f"__SML_{filename.rsplit('.', 1)[0].upper()}_EOF__"
         blocks.append(f"cat > \"$RANKS_DIR/{filename}\" <<'{delim}'\n{content.rstrip()}\n{delim}")
         blocks.append(f'chmod +x "$RANKS_DIR/{filename}"')
     return "\n\n".join(blocks)
@@ -932,6 +958,9 @@ def render_rank_scripts(launch_args: LaunchArgs) -> dict[str, str]:
         scripts["head.sh"] = _render_vllm_head(launch_args, framework)
         if npr > 1:
             scripts["follower.sh"] = _render_vllm_follower(launch_args, framework)
+    elif framework.name == "pool":
+        scripts["head.sh"] = _render_pool_head(launch_args, framework)
+        scripts[_POOL_AGENT_FILENAME] = _POOL_AGENT_TEXT
 
     if _fronted_by_router(launch_args):
         scripts["router.sh"] = _render_router(launch_args)

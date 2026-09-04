@@ -152,6 +152,11 @@ class LaunchArgs(BaseModel):
         tunnel = (self.tunnel_url, self.tunnel_token_file, self.tunnel_target)
         if any(tunnel) and not all(tunnel):
             raise ValueError("tunnel_url, tunnel_token_file and tunnel_target must be set together.")
+        if self.framework == "pool":
+            if self.topology.nodes_per_replica != 1:
+                raise ValueError("The pool framework runs one node per replica (nodes_per_replica must be 1).")
+            if self.router != ROUTER_OPENTELA:
+                raise ValueError("The pool framework dispatches by model name itself; use the default opentela router.")
         return self
 
     @property

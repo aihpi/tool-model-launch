@@ -4,6 +4,7 @@ and check the result is valid bash with the shape hpi/README.md promises."""
 
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -50,6 +51,10 @@ def test_hpi_example_renders_valid_bash(tmp_path: Path, example_path: str) -> No
     for filename, content in _render(example_path).items():
         path = tmp_path / filename
         path.write_text(content)
+        if filename.endswith(".py"):  # the pool agent rides along with the rank scripts
+            result = subprocess.run([sys.executable, "-m", "py_compile", str(path)], capture_output=True)
+            assert result.returncode == 0, f"py_compile failed for {filename}:\n{result.stderr.decode()}"
+            continue
         result = subprocess.run(["bash", "-n", str(path)], capture_output=True)
         assert result.returncode == 0, f"bash -n failed for {filename}:\n{result.stderr.decode()}"
         if _HAS_SHELLCHECK:
