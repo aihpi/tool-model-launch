@@ -123,9 +123,16 @@ def _render_site_setup(launch_args: LaunchArgs) -> str:
         lines += [
             "# Tunnel to the OpenTela head; $TUN is the local end the bootstrap addr points at.",
             "TUN=$((30000 + SLURM_JOB_ID % 10000))",
+            # The rank scripts run under `set -x`; the trace would print the
+            # expanded command line, token included, into the job log. Turn
+            # xtrace off around the one command that reads it and restore
+            # whatever was in effect before (master.sh does not trace).
+            "_sml_xtrace=$-",
+            "{ set +x; } 2>/dev/null",
             f'"$WSTUNNEL_BIN" client -L "tcp://127.0.0.1:$TUN:{launch_args.tunnel_target}" \\',
             f'    --http-upgrade-path-prefix "otela-$(cat {launch_args.tunnel_token_file})" \\',
             f'    "{launch_args.tunnel_url}" &',
+            'case "$_sml_xtrace" in *x*) set -x ;; esac',
             "sleep 3",
         ]
     return "\n".join(lines)

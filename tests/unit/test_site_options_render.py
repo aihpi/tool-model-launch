@@ -289,3 +289,25 @@ def test_health_check_url_and_model_prefix_env(monkeypatch: pytest.MonkeyPatch) 
         monkeypatch.delenv("SML_HEALTH_MODEL_PREFIX")
         importlib.reload(checker)
     assert launch_args_module.FRAMEWORK_PORT == 8080  # untouched by any of the above
+
+
+def test_tunnel_token_never_reaches_the_xtrace_log(tmp_path: Path) -> None:
+    """head.sh runs under `set -x`; the wstunnel line reads the token, so tracing
+    must be off around it and restored afterwards. Run the real shell to check."""
+    token_file = tmp_path / "token"
+    token_file.write_text("s3cr3t-token\n")
+    wstunnel = tmp_path / "wstunnel"
+    wstunnel.write_text("#!/bin/bash\nexit 0\n")
+    wstunnel.chmod(0o755)
+    head = render_all(_make_args(**{**_TUNNEL, "tunnel_token_file": str(token_file)}))["head.sh"]
+    setup = head[: head.index("$OPENTELA_BIN start")]
+    proc = subprocess.run(
+        ["bash", "-c", setup.replace("sleep 3", "true") + '\necho "xtrace=$-"'],
+        env={"PATH": "/usr/bin:/bin", "SLURM_JOB_ID": "2724141", "WSTUNNEL_BIN": str(wstunnel)},
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "s3cr3t-token" not in proc.stderr
+    assert "wstunnel" in proc.stderr or "WSTUNNEL_BIN" not in proc.stderr  # other lines still traced
+    assert "xtrace=" in proc.stdout and "x" in proc.stdout.split("xtrace=")[1]  # set -x restored
