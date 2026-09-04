@@ -75,6 +75,19 @@ when setting up a new site or shared directory.
    so it only asks for your LiteLLM API key: one for `https://api.aisc.hpi.de` with the
    `otela-test` access group. `sml.env` also renames the TUI and prompts to "HPI AISC".
 
+## Launch with a recipe (no script)
+
+`sml advanced` reads flags from files (`@file`, shell-style lines, `#` comments). The site
+constants live in one file and each model in another:
+
+```bash
+sml advanced @$SML_HOME/src/hpi/recipes/_site.args @$SML_HOME/src/hpi/recipes/qwen3-0.6b.args
+```
+
+Copy `qwen3-0.6b.args`, change `--model`, `--served-model-name`, `--mem`, `--time`, and launch the
+copy the same way; extra flags on the command line override the files. `pool.args` launches the
+[GPU pool](#gpu-pool-many-models-on-one-h100). The recipes name the shared install's paths.
+
 ## Launch
 
 ```bash

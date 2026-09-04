@@ -1,0 +1,11 @@
+# GPU pool: every model in ~/.sml/pool.toml on one H100 via vLLM sleep mode.
+# First:  sed "s|<user>|$USER|" hpi/pool.toml > ~/.sml/pool.toml
+# Then:   sml advanced @hpi/recipes/_site.args @hpi/recipes/pool.args
+--framework pool
+--served-model-name pool
+--opentela-service-name pool
+--gres gpu:h100:1
+--cpus-per-task 16
+--mem 100G
+--time 12:00:00
+--framework-args "--config ~/.sml/pool.toml"

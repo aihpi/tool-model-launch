@@ -6,6 +6,7 @@ import importlib.metadata
 import logging
 import os
 import re
+import shlex
 import sys
 from collections.abc import Awaitable, Callable, Coroutine
 from pathlib import Path
@@ -461,10 +462,22 @@ def _add_advanced_launch_arguments(
     )
 
 
+class _ArgumentParser(argparse.ArgumentParser):
+    """argparse with @file support that reads shell-style lines: several flags per
+    line, quoted values (``--framework-args "--model x"``), blank lines and ``#``
+    comments. argparse's default takes one whole line as one argument."""
+
+    def convert_arg_line_to_args(self, arg_line: str) -> list[str]:
+        return shlex.split(arg_line, comments=True)
+
+
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _ArgumentParser(
         prog="sml",
         description=f"{site.SITE_NAME} Model Launcher",
+        # `sml advanced @recipe.args` reads flags from a file (see hpi/recipes).
+        fromfile_prefix_chars="@",
+        epilog="Flags can be read from a file: sml advanced @recipe.args (one or more flags per line, # comments).",
     )
     _meta = importlib.metadata.metadata("swiss-ai-model-launch")
     parser.add_argument(
