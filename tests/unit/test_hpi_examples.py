@@ -42,6 +42,7 @@ def test_hpi_example_has_the_reference_job_shape(example_path: str) -> None:
     assert head.index('"$WSTUNNEL_BIN" client') < head.index("$OPENTELA_BIN start")
     assert "--bootstrap.static" in head and "--config-dir" in head and "--seed" in head
     assert "--service.port $FRAMEWORK_PORT" in head and "--port $FRAMEWORK_PORT" in head
+    assert 'sml_enroot_data="/sc/projects/sci-aisc/aisc-share/enroot-data/$USER"' in master
     for content in out.values():
         assert "capstor" not in content and "cscs" not in content
 

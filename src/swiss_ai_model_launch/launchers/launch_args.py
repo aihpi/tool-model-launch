@@ -146,6 +146,11 @@ class LaunchArgs(BaseModel):
     # time into stock `--container-image/--container-mounts/--container-workdir`
     # flags plus exported env for sites running unmodified pyxis.
     container_spec: ContainerSpec = CONTAINER_SPEC_EDF
+    # Where stock pyxis may unpack container rootfs. It ignores ENROOT_DATA_PATH
+    # from the job environment and uses ~/.local/share/enroot; on clusters with
+    # small home quotas master.sh points that directory here (a symlink) and
+    # prunes rootfs of jobs Slurm no longer knows. None: leave pyxis alone.
+    enroot_data_path: str | None = None
 
     @model_validator(mode="after")
     def _validate(self) -> "LaunchArgs":

@@ -379,6 +379,17 @@ def _add_advanced_launch_arguments(
         ),
     )
     advanced_parser.add_argument(
+        "--enroot-data-path",
+        dest="enroot_data_path",
+        default=os.environ.get("SML_ENROOT_DATA_PATH") or None,
+        metavar="DIR",
+        help=(
+            "Where pyxis may unpack container rootfs (env: SML_ENROOT_DATA_PATH). master.sh points "
+            "~/.local/share/enroot there and removes rootfs of jobs Slurm no longer knows; $USER/$HOME "
+            "expand on the batch node. Default: leave pyxis' own location."
+        ),
+    )
+    advanced_parser.add_argument(
         "--tunnel-url",
         dest="tunnel_url",
         default=None,
@@ -951,6 +962,7 @@ def build_launch_args_from_advanced(
         tunnel_token_file=getattr(args, "tunnel_token_file", None),
         tunnel_target=getattr(args, "tunnel_target", None),
         container_spec=getattr(args, "container_spec", CONTAINER_SPEC_EDF),
+        enroot_data_path=getattr(args, "enroot_data_path", None),
     )
 
 

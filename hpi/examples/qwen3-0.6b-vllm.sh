@@ -7,6 +7,7 @@ sml advanced \
   --framework vllm \
   --environment hpi/envs/vllm_hpi.toml \
   --container-spec pyxis \
+  --enroot-data-path '/sc/projects/sci-aisc/aisc-share/enroot-data/$USER' \
   --gres gpu:h100:1 \
   --no-exclusive \
   --cpus-per-task 8 \

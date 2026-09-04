@@ -7,6 +7,7 @@ sml advanced \
   --framework pool \
   --environment hpi/envs/vllm_hpi.toml \
   --container-spec pyxis \
+  --enroot-data-path '/sc/projects/sci-aisc/aisc-share/enroot-data/$USER' \
   --served-model-name pool \
   --opentela-service-name pool \
   --gres gpu:h100:1 \

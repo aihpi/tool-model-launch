@@ -38,18 +38,16 @@ whose defaults are upstream behaviour, so `git merge upstream/main` stays clean.
    enroot import -o /PATH/TO/aisc-share/images/vllm-openai.sqsh docker://vllm/vllm-openai:<tag>
    ```
 
-3. **Keep pyxis out of your home**: pyxis unpacks every container rootfs into
-   `$XDG_DATA_HOME/enroot` (`~/.local/share/enroot`), i.e. ~30 GB per running vLLM job on the
-   200 GB home quota, and it ignores `ENROOT_DATA_PATH` from the job environment. Point that
-   directory at the shared dir once:
-
-   ```bash
-   mkdir -p /PATH/TO/aisc-share/enroot-data/$USER && rm -rf ~/.local/share/enroot
-   ln -s /PATH/TO/aisc-share/enroot-data/$USER ~/.local/share/enroot
-   ```
-
+3. **Keep pyxis out of home** (automatic): pyxis unpacks every container rootfs into
+   `~/.local/share/enroot` (~30 GB per running vLLM job against the 200 GB home quota) and
+   ignores `ENROOT_DATA_PATH` from the job environment. With `SML_ENROOT_DATA_PATH` from
+   `sml.env` (or `--enroot-data-path`), every job's `master.sh` turns that directory into a
+   symlink to `aisc-share/enroot-data/$USER` and removes rootfs left behind by jobs Slurm no
+   longer knows, before the first `srun`. Nothing to do per user; if `~/.local/share/enroot`
+   already holds a *running* job's rootfs the job only warns and retries next time.
    The env toml mounts `hf-cache/` and `vllm-cache/` and sets `HF_HOME` / `VLLM_CACHE_ROOT` to
-   them, so weights and torch.compile caches stay out of home as well.
+   them, so weights and torch.compile caches stay out of home as well. Those three shared
+   directories must be group-writable for everyone who launches (`chmod g+ws`).
 
 4. **Token**: `~/otela-tunnel-token` on the Slurm home, mode 600. The job reads it at run time;
    it never appears in scripts, labels or `squeue`.

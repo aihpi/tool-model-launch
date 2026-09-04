@@ -651,6 +651,48 @@ def _render_pyxis_container_args(launch_args: LaunchArgs) -> str:
     return "\n".join(lines)
 
 
+def _render_enroot_data_path(launch_args: LaunchArgs) -> str:
+    """Redirect pyxis' per-job container rootfs and prune stale ones.
+
+    Stock pyxis unpacks every container into ``$XDG_DATA_HOME/enroot`` (30 GB+
+    per vLLM job) and ignores ``ENROOT_DATA_PATH`` from the job environment, so
+    the only user-level lever is that directory itself: make it a symlink to
+    ``enroot_data_path``. Pyxis removes a job's rootfs when the job ends, but a
+    hard-killed job can leave one behind; any ``pyxis_<job>.<step>`` directory
+    whose job Slurm no longer knows is removed. Runs on the batch node, before
+    the first srun. ``$USER``/``$HOME`` in the configured path expand there.
+    """
+    return (
+        "# Stock pyxis unpacks container rootfs under ~/.local/share/enroot and ignores\n"
+        "# ENROOT_DATA_PATH from the job environment: point that directory at the\n"
+        "# configured location and drop rootfs left behind by jobs that are gone.\n"
+        f'sml_enroot_data="{launch_args.enroot_data_path}"\n'
+        'sml_enroot_link="${XDG_DATA_HOME:-$HOME/.local/share}/enroot"\n'
+        'mkdir -p "$sml_enroot_data" "$(dirname "$sml_enroot_link")"\n'
+        "sml_prune_enroot() {\n"
+        "    local d jid\n"
+        '    for d in "$1"/pyxis_*; do\n'
+        '        [[ -d "$d" ]] || continue\n'
+        '        jid="${d##*/pyxis_}"\n'
+        '        jid="${jid%%.*}"\n'
+        '        [[ "$jid" =~ ^[0-9]+$ ]] || continue  # only pyxis_<job>.<step> dirs\n'
+        '        [[ "$jid" == "${SLURM_JOB_ID:-}" ]] && continue\n'
+        '        if ! scontrol show job "$jid" >/dev/null 2>&1; then\n'
+        '            echo "Removing stale container rootfs $d (job $jid is gone)"\n'
+        '            rm -rf -- "$d"\n'
+        "        fi\n"
+        "    done\n"
+        "}\n"
+        'sml_prune_enroot "$sml_enroot_data"\n'
+        'if [[ -d "$sml_enroot_link" && ! -L "$sml_enroot_link" ]]; then\n'
+        '    sml_prune_enroot "$sml_enroot_link"\n'
+        '    rmdir "$sml_enroot_link" 2>/dev/null \\\n'
+        '        || echo "warning: $sml_enroot_link is not empty; pyxis keeps unpacking there until it is" >&2\n'
+        "fi\n"
+        '[[ -e "$sml_enroot_link" ]] || ln -s "$sml_enroot_data" "$sml_enroot_link"'
+    )
+
+
 def _render_container_srun_flags(launch_args: LaunchArgs) -> str:
     """The srun lines that put a step into the env toml's container."""
     if launch_args.container_spec == CONTAINER_SPEC_PYXIS:
@@ -981,6 +1023,8 @@ def render_master(launch_args: LaunchArgs) -> str:
         sections.append(telemetry)
 
     sections.append(_render_arch_detection(launch_args))
+    if launch_args.enroot_data_path:
+        sections.append(_render_enroot_data_path(launch_args))
     sections.append(_render_env_file_resolution(launch_args))
     if launch_args.container_spec == CONTAINER_SPEC_PYXIS:
         sections.append(_render_pyxis_container_args(launch_args))

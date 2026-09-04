@@ -78,6 +78,7 @@ Everything cluster-specific is a flag or an environment variable whose default i
 | `--tunnel-url`, `--tunnel-token-file`, `--tunnel-target` | none | wstunnel to an OpenTela head that is not directly routable; a bare peer ID in `--opentela-bootstrap-addr` is reached through it |
 | `--container-spec edf\|pyxis` | `edf`: the env toml goes to pyxis' `--environment` flag | `pyxis`: stock pyxis without EDF support; the toml is translated into `--container-image/--container-mounts/--container-workdir/--container-env` at render time (`[annotations]` ignored, image entrypoint skipped unless `entrypoint = true`) |
 | `--opentela-service-name` | `llm` | service a job advertises; the [GPU pool](gpu-pool.md) uses `pool` |
+| `--enroot-data-path` | pyxis default (`~/.local/share/enroot`) | where stock pyxis unpacks container rootfs; stale rootfs of finished jobs are pruned |
 | `SML_OPENTELA_BOOTSTRAP_ADDR` | prod peer | default for `--opentela-bootstrap-addr` |
 | `SML_TELEMETRY_ENDPOINT` | CSCS sink | launch-telemetry sink; empty disables |
 | `SML_HEALTH_CHECK_URL`, `SML_HEALTH_MODEL_PREFIX` | CSCS gateway, no prefix | where the health panel probes and how the gateway names the model |
