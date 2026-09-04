@@ -39,7 +39,7 @@ args = "--max-model-len 32768"        # extra vllm serve arguments
 | --- | --- |
 | `sleep_after` | Idle time after which an awake model is put to sleep. Durations accept `s`, `m`, `h`. |
 | `sleep_level` | vLLM sleep level. Level 1 keeps weights in host RAM and wakes in ~0.3 s (0.6B) to ~5 s (200B+). Level 2 would discard the weights too but needs a weight reload after waking; not supported yet. |
-| `gpu_headroom` | Fraction of each GPU kept free; sleeping children still hold a CUDA context (~0.5 GB each). |
+| `gpu_headroom` | Fraction of each GPU kept free; sleeping children still hold a CUDA context plus allocator residue (measured 1.5–4 GB each for 0.6B–32B on an H100). |
 | `drain_timeout` | How long an eviction waits for a busy model's requests to finish. On timeout the requester gets a `503` with `Retry-After`. |
 | `start_timeout` | How long a fresh `vllm serve` may take to become healthy. |
 | `models[].served_name` | Must equal the `model` LiteLLM sends: the sml-namespaced `<user>/<vendor>/<model>`. |
