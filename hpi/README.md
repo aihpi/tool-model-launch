@@ -19,7 +19,7 @@ A ready-made install lives in the project share; every AISC staff member can use
 
 ```bash
 source /sc/projects/sci-aisc/aisc-share/sml/env.sh   # puts `sml` on PATH with the HPI defaults
-sml init --launcher slurm                             # once: asks only for your LiteLLM key
+sml init                                              # once: asks only for your LiteLLM key
 bash $SML_HOME/src/hpi/examples/qwen3-0.6b-vllm.sh    # launch; the examples run from any directory
 ```
 
@@ -71,8 +71,9 @@ when setting up a new site or shared directory.
 4. **Token**: `~/otela-tunnel-token` on the Slurm home, mode 600. The job reads it at run time;
    it never appears in scripts, labels or `squeue`.
 
-5. **sml**: `source hpi/sml.env`, then `sml init` choosing the `slurm` launcher. The
-   "research API key" is a LiteLLM key that has the `otela-test` access group.
+5. **sml**: `source hpi/sml.env`, then `sml init`. The launcher is preselected (`SML_LAUNCHER`),
+   so it only asks for your LiteLLM API key: one for `https://api.aisc.hpi.de` with the
+   `otela-test` access group. `sml.env` also renames the TUI and prompts to "HPI AISC".
 
 ## Launch
 

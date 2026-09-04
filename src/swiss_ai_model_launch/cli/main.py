@@ -13,6 +13,7 @@ from typing import Any, cast
 
 import firecrest as f7t
 
+from swiss_ai_model_launch import site
 from swiss_ai_model_launch.cli.configuration import InitConfig, optional_value
 from swiss_ai_model_launch.cli.configuration.models import (
     ChainConfiguration,
@@ -463,7 +464,7 @@ def _add_advanced_launch_arguments(
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sml",
-        description="Swiss AI Model Launcher",
+        description=f"{site.SITE_NAME} Model Launcher",
     )
     _meta = importlib.metadata.metadata("swiss-ai-model-launch")
     parser.add_argument(
