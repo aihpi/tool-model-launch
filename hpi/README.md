@@ -13,6 +13,21 @@ whose defaults are upstream behaviour, so `git merge upstream/main` stays clean.
 | Binaries | OpenTela `v0.2.4` (`otela-amd64`), wstunnel `v10.7.1` |
 | Runbook of the underlying setup | `docs/opentela-slurm.md` in `aihpi/litellm-k8s` |
 
+## Shared install (no clone needed)
+
+A ready-made install lives in the project share; every AISC staff member can use it:
+
+```bash
+source /sc/projects/sci-aisc/aisc-share/sml/env.sh   # puts `sml` on PATH with the HPI defaults
+sml init --launcher slurm                             # once: asks only for your LiteLLM key
+bash $SML_HOME/src/hpi/examples/qwen3-0.6b-vllm.sh    # launch; the examples run from any directory
+```
+
+`/sc/projects/sci-aisc/aisc-share/sml/bin/sml` also works without sourcing anything. The install
+is a clone of this branch (`$SML_HOME/src`) with its own venv; update it with
+`git -C $SML_HOME/src pull && (cd $SML_HOME/src && uv sync)`. The steps below are only needed
+when setting up a new site or shared directory.
+
 ## One-time setup
 
 1. **Shared directory** (absolute path, readable from compute nodes; replace `/PATH/TO/aisc-share` in

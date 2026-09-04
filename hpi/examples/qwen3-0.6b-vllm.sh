@@ -3,9 +3,11 @@
 # shared H100, registered at our OpenTela head through the wstunnel.
 # Prerequisites: `source hpi/sml.env`, `sml init` (launcher: slurm), the paths in
 # hpi/envs/vllm_hpi.toml, and ~/otela-tunnel-token (mode 600).
+# Resolve hpi/ relative to this script so it runs from any directory.
+HPI=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 sml advanced \
   --framework vllm \
-  --environment hpi/envs/vllm_hpi.toml \
+  --environment "$HPI/envs/vllm_hpi.toml" \
   --container-spec pyxis \
   --enroot-data-path '/sc/projects/sci-aisc/aisc-share/enroot-data/$USER' \
   --gres gpu:h100:1 \

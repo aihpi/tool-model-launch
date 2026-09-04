@@ -32,6 +32,7 @@ def _parse_sml_advanced_script(content: str):
     text = content
     text = re.sub(r"\\\n", " ", text)  # collapse line continuations
     text = re.sub(r"^\s*#.*$", "", text, flags=re.MULTILINE)  # strip comments
+    text = re.sub(r"^\s*[A-Za-z_][A-Za-z0-9_]*=.*$", "", text, flags=re.MULTILINE)  # drop shell assignments
     tokens = shlex.split(text)
     if tokens[:2] != ["sml", "advanced"]:
         raise ValueError(f"Not an `sml advanced` script (got {tokens[:2]!r})")

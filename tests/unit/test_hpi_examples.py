@@ -20,7 +20,9 @@ _EXAMPLES = sorted(str(p.relative_to(_REPO_ROOT)) for p in (_REPO_ROOT / "hpi" /
 
 
 def _render(example_path: str) -> dict[str, str]:
-    args = _parse_sml_advanced_script((_REPO_ROOT / example_path).read_text())
+    # The scripts resolve $HPI from their own location; the parser sees plain text.
+    content = (_REPO_ROOT / example_path).read_text().replace("$HPI", str(_REPO_ROOT / "hpi"))
+    args = _parse_sml_advanced_script(content)
     launch_args = build_launch_args_from_advanced(args, username="alice", account="aisc-staff", partition="aisc-batch")
     out = {"master.sh": render_sbatch_header(launch_args) + render_master(launch_args)}
     out.update(render_rank_scripts(launch_args))
