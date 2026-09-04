@@ -12,7 +12,7 @@ sml advanced \
   --gres gpu:1 \
   --no-exclusive \
   --cpus-per-task 16 \
-  --mem 160G \
+  --mem 100G \
   --sbatch-arg=--exclude=ga03 \
   --framework-port auto \
   --disable-metrics \

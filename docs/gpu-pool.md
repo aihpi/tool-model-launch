@@ -56,7 +56,7 @@ args = "--max-model-len 32768"        # extra vllm serve arguments
 ```bash title="hpi/examples/pool.sh (abridged)"
 sml advanced --framework pool --environment hpi/envs/vllm_hpi.toml \
   --served-model-name pool --opentela-service-name pool \
-  --gres gpu:1 --no-exclusive --mem 160G --framework-port auto \
+  --gres gpu:1 --no-exclusive --mem 100G --framework-port auto \
   --tunnel-url wss://api.aisc.hpi.de:443 --tunnel-token-file ~/otela-tunnel-token \
   --tunnel-target otela-head.litellm.svc.cluster.local:43905 \
   --framework-args "--config ~/tool-model-launch/hpi/pool.toml"
