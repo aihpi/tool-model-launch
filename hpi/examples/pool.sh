@@ -9,7 +9,7 @@ sml advanced \
   --container-spec pyxis \
   --served-model-name pool \
   --opentela-service-name pool \
-  --gres gpu:1 \
+  --gres gpu:h100:1 \
   --no-exclusive \
   --cpus-per-task 16 \
   --mem 100G \

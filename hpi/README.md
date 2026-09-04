@@ -53,7 +53,7 @@ The example is the `sml advanced` form of the reference `~/otela-worker.sbatch`.
 
 | Flag | Why |
 | --- | --- |
-| `--gres gpu:1 --no-exclusive --cpus-per-task 8 --mem 48G` | shared nodes |
+| `--gres gpu:h100:1 --no-exclusive --cpus-per-task 8 --mem 48G` | shared nodes; `aisc-batch` also holds A30 (`gx17v1`) and L40 (`ga03`) nodes, so name the GPU type |
 | `--container-spec pyxis` | the cluster's pyxis has no `--environment` (EDF) flag: the env toml is translated into `--container-image/--container-mounts/--container-workdir/--container-env`, image entrypoint skipped |
 | `--sbatch-arg=--exclude=ga03` | no arm64 binaries |
 | `--framework-port auto` | two jobs may share a node: port from `SLURM_JOB_ID` |
