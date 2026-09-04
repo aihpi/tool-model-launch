@@ -16,7 +16,7 @@ from swiss_ai_model_launch.cli.healthcheck import ModelHealth, check_model_healt
 from swiss_ai_model_launch.launchers import FirecRESTLauncher, Launcher, SlurmLauncher
 from swiss_ai_model_launch.launchers.firecrest_auth import build_client
 from swiss_ai_model_launch.launchers.job_status import JobStatus
-from swiss_ai_model_launch.launchers.launch_args import TELEMETRY_ENDPOINT
+from swiss_ai_model_launch.launchers.launch_args import telemetry_endpoint
 from swiss_ai_model_launch.launchers.launch_request import LaunchRequest
 from swiss_ai_model_launch.launchers.served_name import namespace_served_model_name
 from swiss_ai_model_launch.launchers.utils import call_with_firecrest_retry
@@ -102,7 +102,7 @@ async def _create_launcher(
             system_name=system,
             partition=partition,
             reservation=reservation,
-            telemetry_endpoint=TELEMETRY_ENDPOINT,
+            telemetry_endpoint=telemetry_endpoint(),
         )
     elif launcher_type == "slurm":
         return SlurmLauncher(
@@ -111,7 +111,7 @@ async def _create_launcher(
             account=grp.getgrgid(os.getgid()).gr_name,
             partition=partition,
             reservation=reservation,
-            telemetry_endpoint=TELEMETRY_ENDPOINT,
+            telemetry_endpoint=telemetry_endpoint(),
         )
     else:
         raise RuntimeError(f"Launcher type '{launcher_type}' is not supported.")

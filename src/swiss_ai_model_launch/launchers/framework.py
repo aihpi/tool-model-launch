@@ -6,7 +6,8 @@ from importlib.resources import files
 from typing import ClassVar
 
 from swiss_ai_model_launch.launchers.launch_args import (
-    FRAMEWORK_PORT,
+    FRAMEWORK_PORT_AUTO,
+    FRAMEWORK_PORT_AUTO_EXPR,
     ROUTER_SGLANG,
     LaunchArgs,
     time_str_to_seconds,
@@ -80,7 +81,35 @@ def _make_framework(name: str) -> Framework:
 
 
 def _compose_framework_args(launch_args: LaunchArgs) -> str:
-    return f"--port {FRAMEWORK_PORT} {launch_args.framework_args}".strip()
+    return f"--port {launch_args.framework_port_shell} {launch_args.framework_args}".strip()
+
+
+def _port_json(launch_args: LaunchArgs) -> str:
+    """The framework port as a JSON number inside the single-quoted telemetry
+    payload: a literal, or the shell expansion spliced in the same way as the
+    SLURM_* values."""
+    if launch_args.framework_port == FRAMEWORK_PORT_AUTO:
+        return "'\"$FRAMEWORK_PORT\"'"
+    return str(launch_args.framework_port)
+
+
+def _render_site_setup(launch_args: LaunchArgs) -> str:
+    """Run-time prerequisites shared by every rank script and by master.sh:
+    the per-job framework port (when "auto") and the wstunnel to the bootstrap
+    peer (when configured). Empty for the default fixed-port, direct-mesh case."""
+    lines: list[str] = []
+    if launch_args.framework_port == FRAMEWORK_PORT_AUTO:
+        lines.append(f"FRAMEWORK_PORT={FRAMEWORK_PORT_AUTO_EXPR}")
+    if launch_args.tunnel_url:
+        lines += [
+            "# Tunnel to the OpenTela head; $TUN is the local end the bootstrap addr points at.",
+            "TUN=$((30000 + SLURM_JOB_ID % 10000))",
+            f'"$WSTUNNEL_BIN" client -L "tcp://127.0.0.1:$TUN:{launch_args.tunnel_target}" \\',
+            f'    --http-upgrade-path-prefix "otela-$(cat {launch_args.tunnel_token_file})" \\',
+            f'    "{launch_args.tunnel_url}" &',
+            "sleep 3",
+        ]
+    return "\n".join(lines)
 
 
 def _opentela_labels(launch_args: LaunchArgs) -> str:
@@ -95,6 +124,9 @@ def _opentela_labels(launch_args: LaunchArgs) -> str:
         f"framework_args={framework_args_normalised}",
     ]
     quoted = " \\\n".join(f"    --label {shlex.quote(kv)}" for kv in user_input)
+    # shlex.quote single-quotes the label, which would freeze "$FRAMEWORK_PORT"
+    # as text when the port is "auto"; splice the expansion back in.
+    quoted = quoted.replace("$FRAMEWORK_PORT", "'\"$FRAMEWORK_PORT\"'")
     seconds = time_str_to_seconds(launch_args.time)
     return (
         "    --label launched_by=$USER \\\n"
@@ -108,16 +140,38 @@ def _opentela_labels(launch_args: LaunchArgs) -> str:
 
 
 def _resolve_opentela_bootstrap_addr(launch_args: LaunchArgs) -> str:
-    return launch_args.opentela_bootstrap_addr or OPENTELA_BOOTSTRAP_ADDR
+    addr = launch_args.opentela_bootstrap_addr or OPENTELA_BOOTSTRAP_ADDR
+    if launch_args.tunnel_url and not addr.startswith("/"):
+        # A bare peer ID: the head is reached through the local tunnel end
+        # opened by _render_site_setup.
+        return f"/ip4/127.0.0.1/tcp/$TUN/p2p/{addr}"
+    return addr
 
 
-def _opentela_wrap(inner_cmd: str, launch_args: LaunchArgs, service_port: int = FRAMEWORK_PORT) -> str:
+def _opentela_identity(launch_args: LaunchArgs) -> str:
+    # One deterministic identity per srun step: without --config-dir every peer
+    # on a shared $HOME would load the same $HOME/.config/opentela/keys/id and
+    # collide; without --seed the key would be random per start. bootstrap.static
+    # replaces OpenTela's built-in public bootstrap list so the worker only ever
+    # joins our own head (a private mesh).
+    # ponytail: seed = job*1000+step collides once a job has >= 1000 steps; widen
+    # the multiplier if that ever happens.
+    return (
+        f'    --bootstrap.static "{_resolve_opentela_bootstrap_addr(launch_args)}" \\\n'
+        '    --config-dir "$HOME/.sml/job-${SLURM_JOB_ID}/otela-step-${SLURM_STEP_ID:-0}" \\\n'
+        "    --seed $((SLURM_JOB_ID * 1000 + ${SLURM_STEP_ID:-0})) \\\n"
+    )
+
+
+def _opentela_wrap(inner_cmd: str, launch_args: LaunchArgs, service_port: int | str | None = None) -> str:
     bootstrap_addr = _resolve_opentela_bootstrap_addr(launch_args)
+    port = launch_args.framework_port_shell if service_port is None else service_port
     return (
         f"$OPENTELA_BIN start \\\n"
         f'    --bootstrap.addr "{bootstrap_addr}" \\\n'
-        f"    --service.name llm \\\n"
-        f"    --service.port {service_port} \\\n"
+        f"{_opentela_identity(launch_args)}"
+        f"    --service.name {launch_args.opentela_service_name} \\\n"
+        f"    --service.port {port} \\\n"
         f"{_opentela_labels(launch_args)}"
         f'    --subprocess "{inner_cmd}"'
     )
@@ -146,12 +200,14 @@ def _opentela_wrap_metrics_only(inner_cmd: str, launch_args: LaunchArgs) -> str:
     return (
         f"$OPENTELA_BIN start \\\n"
         f'    --bootstrap.addr "{bootstrap_addr}" \\\n'
+        f"{_opentela_identity(launch_args)}"
         f"{_opentela_labels(launch_args)}"
         f'    --subprocess "{inner_cmd}"'
     )
 
 
-def _shebang_and_setup(framework: Framework, pre_launch_cmds: str) -> str:
+def _shebang_and_setup(framework: Framework, launch_args: LaunchArgs) -> str:
+    pre_launch_cmds = launch_args.pre_launch_cmds
     lines = [
         "#!/bin/bash",
         # SC2046/SC2086: user-supplied framework_args is inlined bare on the
@@ -163,6 +219,9 @@ def _shebang_and_setup(framework: Framework, pre_launch_cmds: str) -> str:
         "",
     ]
     lines.extend(framework.env_exports)
+    site_setup = _render_site_setup(launch_args)
+    if site_setup:
+        lines += ["", site_setup]
     if pre_launch_cmds:
         lines += [
             "",
@@ -176,7 +235,7 @@ def _shebang_and_setup(framework: Framework, pre_launch_cmds: str) -> str:
 def _render_sglang_head(launch_args: LaunchArgs, framework: Framework) -> str:
     args = _compose_framework_args(launch_args)
     npr = launch_args.topology.nodes_per_replica
-    pre = _shebang_and_setup(framework, launch_args.pre_launch_cmds)
+    pre = _shebang_and_setup(framework, launch_args)
     use_opentela = not launch_args.disable_opentela
 
     if npr == 1:
@@ -208,7 +267,7 @@ def _render_sglang_head(launch_args: LaunchArgs, framework: Framework) -> str:
 def _render_sglang_follower(launch_args: LaunchArgs, framework: Framework) -> str:
     args = _compose_framework_args(launch_args)
     npr = launch_args.topology.nodes_per_replica
-    pre = _shebang_and_setup(framework, launch_args.pre_launch_cmds)
+    pre = _shebang_and_setup(framework, launch_args)
     use_opentela = not launch_args.disable_opentela
     # node_rank is $1 (small int) and replica_head_ip is $2 (IPv4 from master).
     # Both are word-split-safe and intentionally left unquoted here so the same
@@ -233,7 +292,7 @@ def _render_sglang_follower(launch_args: LaunchArgs, framework: Framework) -> st
 def _render_vllm_head(launch_args: LaunchArgs, framework: Framework) -> str:
     args = _compose_framework_args(launch_args)
     npr = launch_args.topology.nodes_per_replica
-    pre = _shebang_and_setup(framework, launch_args.pre_launch_cmds)
+    pre = _shebang_and_setup(framework, launch_args)
     use_opentela = not launch_args.disable_opentela
 
     if npr == 1:
@@ -284,7 +343,7 @@ def _render_vllm_head(launch_args: LaunchArgs, framework: Framework) -> str:
 
 
 def _render_vllm_follower(launch_args: LaunchArgs, framework: Framework) -> str:
-    pre = _shebang_and_setup(framework, launch_args.pre_launch_cmds)
+    pre = _shebang_and_setup(framework, launch_args)
     use_opentela = not launch_args.disable_opentela
     # replica_head_ip is $2 (IPv4 from master), word-split-safe, left unquoted
     # so the cmd is reusable inside the OpenTela --subprocess "..." wrap without
@@ -327,6 +386,9 @@ def _render_router(launch_args: LaunchArgs) -> str:
         launch = _opentela_wrap(launch_cmd, launch_args, SGLANG_ROUTER_PORT)
     else:
         launch = launch_cmd
+    site_setup = _render_site_setup(launch_args)
+    site_setup_block = f"{site_setup}\n\n" if site_setup else ""
+    port = launch_args.framework_port_shell
     return (
         "#!/bin/bash\n"
         # SC2086: intentional word-splitting of $worker_urls into one
@@ -337,6 +399,7 @@ def _render_router(launch_args: LaunchArgs) -> str:
         "set -ex\n"
         "# Positional args: replica_head_ip_0 replica_head_ip_1 ...\n"
         "\n"
+        f"{site_setup_block}"
         "# Bypass proxy — the Rust router does not honour it and hangs if set.\n"
         "unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY all_proxy ALL_PROXY\n"
         "\n"
@@ -345,7 +408,7 @@ def _render_router(launch_args: LaunchArgs) -> str:
         '    echo "Checking replica at $ip..."\n'
         f'    while [[ "$(curl --noproxy "*" -s -o /dev/null '
         f"-w '%{{http_code}}' "
-        f'"http://$ip:{FRAMEWORK_PORT}/health")" != "200" ]]; do\n'
+        f'"http://$ip:{port}/health")" != "200" ]]; do\n'
         "        sleep 10\n"
         "    done\n"
         '    echo "Replica at $ip is fully ready!"\n'
@@ -355,7 +418,7 @@ def _render_router(launch_args: LaunchArgs) -> str:
         "# Build worker-urls arg from all positional args\n"
         'worker_urls=""\n'
         'for ip in "$@"; do\n'
-        f'    worker_urls="$worker_urls http://$ip:{FRAMEWORK_PORT}"\n'
+        f'    worker_urls="$worker_urls http://$ip:{port}"\n'
         "done\n"
         "\n"
         f"{launch}\n"
@@ -373,7 +436,7 @@ def _render_telemetry(launch_args: LaunchArgs) -> str:
     # When a router fronts the replicas it is the OpenTela `llm` front door, so
     # the servable endpoint is advertised on the router port (the heads go
     # metrics-only). Otherwise each head advertises `llm` on the framework port.
-    opentela_service_port = SGLANG_ROUTER_PORT if _fronted_by_router(launch_args) else FRAMEWORK_PORT
+    opentela_service_port = SGLANG_ROUTER_PORT if _fronted_by_router(launch_args) else _port_json(launch_args)
     fa = _compose_framework_args(launch_args)
     sml_version = importlib.metadata.version("swiss-ai-model-launch")
     # The four telemetry keys below keep their original pre-rebrand spelling to match
@@ -395,14 +458,14 @@ def _render_telemetry(launch_args: LaunchArgs) -> str:
         f'"model_name": "{launch_args.served_model_name}", '
         f'"replicas": {topology.replicas}, '
         f'"nodes_per_replica": {topology.nodes_per_replica}, '
-        f'"framework_port": {FRAMEWORK_PORT}, '
+        f'"framework_port": {_port_json(launch_args)}, '
         f'"use_router": {use_router}, '
         f'"router_environment": "{launch_args.environment}", '
         f'"router_port": {SGLANG_ROUTER_PORT}, '
         f'"router_args": "{launch_args.router_args}", '
         f'"ocf_enabled": {use_opentela}, '
         f'"ocf_bootstrap_addr": "{_resolve_opentela_bootstrap_addr(launch_args)}", '
-        '"ocf_service_name": "llm", '
+        f'"ocf_service_name": "{launch_args.opentela_service_name}", '
         f'"ocf_service_port": {opentela_service_port}, '
         f'"model_launch_version": "{sml_version}"'
         "}"
@@ -442,6 +505,9 @@ def _render_arch_detection(launch_args: LaunchArgs) -> str:
         f"    export OPENTELA_BIN=/opentelabin/{opentela_bin_channel}/otela-amd64",
         "    SML_ARCH=amd64",
     ]
+    if launch_args.tunnel_url:
+        arm_lines.append(f"    export WSTUNNEL_BIN=/opentelabin/{opentela_bin_channel}/wstunnel-arm64")
+        x86_lines.append(f"    export WSTUNNEL_BIN=/opentelabin/{opentela_bin_channel}/wstunnel-amd64")
     if needs_metrics_bin:
         arm_lines.append(f'    metrics_agent_bin="{base}-arm64"')
         x86_lines.append(f'    metrics_agent_bin="{base}-amd64"')
@@ -515,7 +581,7 @@ def _render_node_mapping() -> str:
     )
 
 
-def _render_replica_head_ip_discovery(replicas: int, nodes_per_replica: int) -> str:
+def _render_replica_head_ip_discovery(replicas: int, nodes_per_replica: int, port: str) -> str:
     blocks = []
     for r in range(replicas):
         start_node = r * nodes_per_replica
@@ -529,7 +595,7 @@ def _render_replica_head_ip_discovery(replicas: int, nodes_per_replica: int) -> 
             f"fi\n"
             f'echo "Replica {r} head IP: $replica_{r}_head_ip"'
         )
-    summary_urls = " ".join(f"http://$replica_{r}_head_ip:{FRAMEWORK_PORT}" for r in range(replicas))
+    summary_urls = " ".join(f"http://$replica_{r}_head_ip:{port}" for r in range(replicas))
     blocks.append(f'echo "All replica URLs: {summary_urls}"  # NOSONAR')
     return "\n\n".join(blocks)
 
@@ -603,7 +669,7 @@ def _render_vmagent(launch_args: LaunchArgs) -> str:
 
     batch_block = (
         "# vmagent runs on the batch node; pyxis containers share the host network\n"
-        "# namespace so the framework API server is reachable at localhost:8080.\n"
+        "# namespace so the framework API server is reachable at localhost:<framework port>.\n"
         "# vmagent is non-critical: disowned so it's not in `wait -n`'s scope, and\n"
         "# the EXIT trap in the footer kills it when master.sh terminates so the\n"
         "# allocation can be released as soon as the framework process is gone.\n"
@@ -705,7 +771,7 @@ def _render_health_checker(launch_args: LaunchArgs) -> str:
         f"{_HEALTH_CHECKER_HEREDOC}\n"
         "if command -v python3 >/dev/null 2>&1; then\n"
         f'    SML_HEALTH_REPORT_PATH="{report_path}" \\\n'
-        f"        SML_HEALTH_FRAMEWORK_PORT={FRAMEWORK_PORT} \\\n"
+        f"        SML_HEALTH_FRAMEWORK_PORT={launch_args.framework_port_shell} \\\n"
         f"        SML_HEALTH_OPENTELA_PORT={_OPENTELA_HTTP_PORT} \\\n"
         f"        SML_HEALTH_INTERVAL={_HEALTH_INTERVAL_SECONDS} \\\n"
         f"        SML_HEALTH_TIMEOUT={_HEALTH_TIMEOUT_SECONDS} \\\n"
@@ -816,6 +882,10 @@ def render_master(launch_args: LaunchArgs) -> str:
         'critical_pids=()\nvmagent_pid=""\nhealth_checker_pid=""',
         _render_self_extracting_ranks(render_rank_scripts(launch_args)),
     ]
+    if launch_args.framework_port == FRAMEWORK_PORT_AUTO:
+        # Same expression as in the rank scripts, so master-side consumers
+        # (health checker, URL summary, telemetry) agree with the framework.
+        sections.append(f"FRAMEWORK_PORT={FRAMEWORK_PORT_AUTO_EXPR}")
 
     telemetry = _render_telemetry(launch_args)
     if telemetry:
@@ -826,7 +896,11 @@ def render_master(launch_args: LaunchArgs) -> str:
     sections.append(_render_node_mapping())
 
     topology = launch_args.topology
-    sections.append(_render_replica_head_ip_discovery(topology.replicas, topology.nodes_per_replica))
+    sections.append(
+        _render_replica_head_ip_discovery(
+            topology.replicas, topology.nodes_per_replica, launch_args.framework_port_shell
+        )
+    )
 
     sections.append(_render_replica_launches(launch_args))
 

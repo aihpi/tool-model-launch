@@ -31,11 +31,13 @@ from swiss_ai_model_launch.launchers.framework import OPENTELA_BOOTSTRAP_ADDR_DE
 from swiss_ai_model_launch.launchers.job_status import JobStatus
 from swiss_ai_model_launch.launchers.launch_args import (
     DEFAULT_MAX_JOB_TIME,
+    FRAMEWORK_PORT,
+    FRAMEWORK_PORT_AUTO,
     ROUTER_OPENTELA,
     ROUTER_SGLANG,
-    TELEMETRY_ENDPOINT,
     LaunchArgs,
     RouterMode,
+    telemetry_endpoint,
     time_str_to_seconds,
 )
 from swiss_ai_model_launch.launchers.launch_request import LaunchRequest
@@ -163,6 +165,15 @@ def _make_launch_request_config(
             ),
         ],
     )
+
+
+def _parse_framework_port(value: str) -> int | str:
+    if value == FRAMEWORK_PORT_AUTO:
+        return value
+    try:
+        return int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a port number or 'auto', got {value!r}") from None
 
 
 def _add_advanced_launch_arguments(
@@ -328,13 +339,56 @@ def _add_advanced_launch_arguments(
     advanced_parser.add_argument(
         "--opentela-bootstrap-addr",
         dest="opentela_bootstrap_addr",
-        default=None,
+        default=os.environ.get("SML_OPENTELA_BOOTSTRAP_ADDR") or None,
         metavar="MULTIADDR",
         help=(
             "Override the OpenTela bootstrap multiaddr "
-            "(e.g. /ip4/<host>/tcp/<port>/p2p/<peer-id>). "
+            "(e.g. /ip4/<host>/tcp/<port>/p2p/<peer-id>; env: SML_OPENTELA_BOOTSTRAP_ADDR). "
+            "With --tunnel-url a bare peer ID is accepted and reached through the tunnel. "
             "Takes precedence over --dev. Defaults to the prod peer."
         ),
+    )
+    advanced_parser.add_argument(
+        "--opentela-service-name",
+        dest="opentela_service_name",
+        default="llm",
+        metavar="NAME",
+        help="OpenTela service the job advertises (default: llm).",
+    )
+    advanced_parser.add_argument(
+        "--framework-port",
+        dest="framework_port",
+        type=_parse_framework_port,
+        default=FRAMEWORK_PORT,
+        metavar="PORT|auto",
+        help=(
+            f"Framework HTTP port (default: {FRAMEWORK_PORT}). 'auto' derives a per-job port "
+            "from SLURM_JOB_ID at run time, for clusters where nodes are shared between jobs."
+        ),
+    )
+    advanced_parser.add_argument(
+        "--tunnel-url",
+        dest="tunnel_url",
+        default=None,
+        metavar="URL",
+        help=(
+            "wstunnel server (e.g. wss://gateway.example.org:443) used to reach an OpenTela "
+            "head that is not directly routable. Requires --tunnel-token-file and --tunnel-target."
+        ),
+    )
+    advanced_parser.add_argument(
+        "--tunnel-token-file",
+        dest="tunnel_token_file",
+        default=None,
+        metavar="PATH",
+        help="File (readable inside the job) holding the tunnel token; its content never enters scripts or logs.",
+    )
+    advanced_parser.add_argument(
+        "--tunnel-target",
+        dest="tunnel_target",
+        default=None,
+        metavar="HOST:PORT",
+        help="Remote endpoint the tunnel forwards to, e.g. otela-head.litellm.svc.cluster.local:43905.",
     )
     advanced_parser.add_argument(
         "--dev",
@@ -631,7 +685,7 @@ async def _create_launcher(
             Launcher,
             await _get_firecrest_launcher_with_client(
                 firecrest_client,
-                telemetry_endpoint=TELEMETRY_ENDPOINT,
+                telemetry_endpoint=telemetry_endpoint(),
                 args=args,
                 non_interactive=non_interactive,
                 ssh_host_override=ssh_host_override,
@@ -641,7 +695,7 @@ async def _create_launcher(
         return cast(
             Launcher,
             await _get_slurm_launcher(
-                telemetry_endpoint=TELEMETRY_ENDPOINT,
+                telemetry_endpoint=telemetry_endpoint(),
                 args=args,
                 non_interactive=non_interactive,
             ),
@@ -879,6 +933,11 @@ def build_launch_args_from_advanced(
         cpus_per_task=getattr(args, "cpus_per_task", None),
         mem=getattr(args, "mem", None),
         sbatch_args=list(getattr(args, "sbatch_args", None) or []),
+        framework_port=getattr(args, "framework_port", FRAMEWORK_PORT),
+        opentela_service_name=getattr(args, "opentela_service_name", "llm"),
+        tunnel_url=getattr(args, "tunnel_url", None),
+        tunnel_token_file=getattr(args, "tunnel_token_file", None),
+        tunnel_target=getattr(args, "tunnel_target", None),
     )
 
 
@@ -896,7 +955,7 @@ async def _run_advanced(args: argparse.Namespace) -> None:
         username=launcher.username,
         account=launcher.account,
         partition=launcher.partition,
-        telemetry_endpoint=TELEMETRY_ENDPOINT,
+        telemetry_endpoint=telemetry_endpoint(),
     )
 
     # Decide single vs. consecutive chain. --time is the total uptime; a job is
