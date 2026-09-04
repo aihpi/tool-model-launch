@@ -98,7 +98,7 @@ class SlurmLauncher(Launcher):
 
     def _get_local_env_file_path(self, launch_request: LaunchRequest) -> str:
         if launch_request.environment is not None:
-            return str(Path(launch_request.environment).resolve())
+            return str(Path(launch_request.environment).expanduser().resolve())
         elif launch_request.framework == "sglang":
             return str(_SGLANG_ENVIRONMENT)
         elif launch_request.framework == "vllm":
@@ -153,7 +153,7 @@ class SlurmLauncher(Launcher):
     async def _prepare_launch_args(self, launch_args: LaunchArgs) -> LaunchArgs:
         return launch_args.model_copy(
             update={
-                "environment": str(Path(launch_args.environment).resolve()),
+                "environment": str(Path(launch_args.environment).expanduser().resolve()),
             }
         )
 

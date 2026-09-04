@@ -1,4 +1,5 @@
 import math
+import os
 import re
 import warnings
 from typing import Literal
@@ -19,8 +20,23 @@ ROUTER_SGLANG: RouterMode = "sglang"
 # ``--service.port``, and embedded in the router's worker URLs. Exposing
 # it as a knob just creates ways for the three to drift.
 FRAMEWORK_PORT = 8080
+# LaunchArgs.framework_port == "auto": the scripts derive a per-job port from
+# SLURM_JOB_ID at run time (shared-node clusters; two jobs may land on one node).
+FRAMEWORK_PORT_AUTO = "auto"
+FRAMEWORK_PORT_AUTO_EXPR = "$((20000 + SLURM_JOB_ID % 10000))"
+
+ContainerSpec = Literal["edf", "pyxis"]
+CONTAINER_SPEC_EDF: ContainerSpec = "edf"
+CONTAINER_SPEC_PYXIS: ContainerSpec = "pyxis"
+
 
 TELEMETRY_ENDPOINT = "https://sml-dev.swissai.svc.cscs.ch/launches"
+
+
+def telemetry_endpoint() -> str | None:
+    """Launch-telemetry sink. SML_TELEMETRY_ENDPOINT overrides it; empty disables."""
+    return os.environ.get("SML_TELEMETRY_ENDPOINT", TELEMETRY_ENDPOINT) or None
+
 
 # SLURM caps a single job at 12h on the target clusters. A model that needs to
 # stay up longer is served by a chain of consecutive jobs (see --consecutive),
@@ -102,6 +118,39 @@ class LaunchArgs(BaseModel):
     dcgm_exporter_binary: str = "/capstor/store/cscs/swissai/infra01/opentela-share/dcgm-exporter"
     disable_dcgm_exporter: bool = False
     disable_metrics: bool = False
+    # Site-specific #SBATCH knobs. The defaults reproduce the historical header
+    # (whole exclusive nodes, no GRES/CPU/memory request) for clusters where a
+    # job owns its node; shared-node clusters set them per launch. sbatch_args
+    # is a verbatim passthrough for anything without its own knob
+    # (--exclude, --constraint, --qos, ...).
+    exclusive: bool = True
+    gres: str | None = None
+    cpus_per_task: int | None = None
+    mem: str | None = None
+    sbatch_args: list[str] = Field(default_factory=list)
+    # Framework HTTP port: fixed by default (see FRAMEWORK_PORT), "auto" for
+    # shared nodes.
+    framework_port: int | Literal["auto"] = FRAMEWORK_PORT
+    # OpenTela service the replicas (or the router) advertise. `llm` is what the
+    # upstream gateway routes to; a multi-model pool registers under its own name.
+    opentela_service_name: str = "llm"
+    # Optional wstunnel to a bootstrap peer that is not directly routable (e.g.
+    # an OpenTela head inside Kubernetes). Set all three or none. The token is
+    # read from the file at run time and never appears in scripts, labels or
+    # squeue output.
+    tunnel_url: str | None = None
+    tunnel_token_file: str | None = None
+    tunnel_target: str | None = None
+    # How the env toml reaches srun. "edf" hands the file to pyxis' CSCS-only
+    # `--environment` flag (upstream behaviour); "pyxis" translates it at render
+    # time into stock `--container-image/--container-mounts/--container-workdir`
+    # flags plus exported env for sites running unmodified pyxis.
+    container_spec: ContainerSpec = CONTAINER_SPEC_EDF
+    # Where stock pyxis may unpack container rootfs. It ignores ENROOT_DATA_PATH
+    # from the job environment and uses ~/.local/share/enroot; on clusters with
+    # small home quotas master.sh points that directory here (a symlink) and
+    # prunes rootfs of jobs Slurm no longer knows. None: leave pyxis alone.
+    enroot_data_path: str | None = None
 
     @model_validator(mode="after")
     def _validate(self) -> "LaunchArgs":
@@ -109,13 +158,27 @@ class LaunchArgs(BaseModel):
             raise ValueError("Metrics require a remote write URL when metrics are enabled.")
         if _PORT_FLAG_RE.search(self.framework_args):
             warnings.warn(
-                f"`--port` in framework_args is redundant; the framework port is hardcoded "
-                f"to {FRAMEWORK_PORT} and auto-injected. Setting it manually risks desyncing "
+                f"`--port` in framework_args is redundant; the framework port is managed by sml "
+                f"({self.framework_port}) and auto-injected. Setting it manually risks desyncing "
                 f"the framework, OpenTela, and the router.",
                 UserWarning,
                 stacklevel=2,
             )
+        tunnel = (self.tunnel_url, self.tunnel_token_file, self.tunnel_target)
+        if any(tunnel) and not all(tunnel):
+            raise ValueError("tunnel_url, tunnel_token_file and tunnel_target must be set together.")
+        if self.framework == "pool":
+            if self.topology.nodes_per_replica != 1:
+                raise ValueError("The pool framework runs one node per replica (nodes_per_replica must be 1).")
+            if self.router != ROUTER_OPENTELA:
+                raise ValueError("The pool framework dispatches by model name itself; use the default opentela router.")
         return self
+
+    @property
+    def framework_port_shell(self) -> str:
+        """The port as written into the scripts: a literal, or the FRAMEWORK_PORT
+        shell variable the scripts define when the port is "auto"."""
+        return "$FRAMEWORK_PORT" if self.framework_port == FRAMEWORK_PORT_AUTO else str(self.framework_port)
 
     @property
     def total_nodes(self) -> int:
@@ -126,22 +189,32 @@ class LaunchArgs(BaseModel):
             f"--job-name={self.job_name}",
             f"--account={self.account}",
             f"--time={self.time}",
-            "--exclusive",
+        ]
+        if self.exclusive:
+            args.append("--exclusive")
+        args += [
             f"--nodes={self.total_nodes}",
             f"--partition={self.partition}",
             "--output=logs/%j/log.out",
             "--error=logs/%j/log.err",
         ]
+        if self.gres:
+            args.append(f"--gres={self.gres}")
+        if self.cpus_per_task:
+            args.append(f"--cpus-per-task={self.cpus_per_task}")
+        if self.mem:
+            args.append(f"--mem={self.mem}")
         if reservation:
             args.append(f"--reservation={reservation}")
         if self.begin:
             args.append(f"--begin={self.begin}")
         if self.dependency:
             args.append(f"--dependency={self.dependency}")
+        args.extend(self.sbatch_args)
         return args
 
     def to_job_env(self) -> dict[str, str]:
-        framework_args = f"--port {FRAMEWORK_PORT} {self.framework_args}".strip()
+        framework_args = f"--port {self.framework_port_shell} {self.framework_args}".strip()
         return {
             "FRAMEWORK": self.framework,
             "SML_ENVIRONMENT": self.environment,

@@ -1,0 +1,25 @@
+# Pyxis/enroot environment for vLLM on the HPI AISC cluster (aisc-batch, x86-64 H100 nodes).
+# Paths must be absolute and visible from the compute nodes; see hpi/README.md.
+image = "/sc/projects/sci-aisc/aisc-share/images/vllm-openai.sqsh"
+
+mounts = [
+  # prod/otela-amd64 (OpenTela) and prod/wstunnel-amd64 live here; the launch
+  # scripts resolve $OPENTELA_BIN / $WSTUNNEL_BIN under /opentelabin.
+  "/sc/projects/sci-aisc/aisc-share/otela-share:/opentelabin",
+  # Home (/sc/home/<user>) is shared between login and compute nodes: ~/.sml (rank scripts, logs),
+  # ~/otela-tunnel-token and the HF cache all live there.
+  "/sc/home",
+  # HF_HOME below must be visible inside the container, or every job downloads
+  # its weights into the ephemeral container overlay again.
+  "/sc/projects/sci-aisc/aisc-share/hf-cache",
+  "/sc/projects/sci-aisc/aisc-share/vllm-cache",
+]
+
+workdir = "/opt"
+
+[env]
+HF_HOME = "/sc/projects/sci-aisc/aisc-share/hf-cache"
+# torch.compile / cuda-graph caches; default is ~/.cache/vllm on the 200 GB home.
+VLLM_CACHE_ROOT = "/sc/projects/sci-aisc/aisc-share/vllm-cache"
+# The vllm-openai image ships no nvcc; FlashInfer's JIT sampler needs it.
+VLLM_USE_FLASHINFER_SAMPLER = "0"

@@ -1,0 +1,13 @@
+# HPI AISC site flags shared by every recipe: usage  sml advanced @hpi/recipes/_site.args @hpi/recipes/<model>.args
+# Paths are those of the shared install (/sc/projects/sci-aisc/aisc-share/sml); see hpi/README.md.
+--environment /sc/projects/sci-aisc/aisc-share/sml/src/hpi/envs/vllm_hpi.toml
+--container-spec pyxis
+--enroot-data-path '/sc/projects/sci-aisc/aisc-share/enroot-data/$USER'
+--no-exclusive
+--sbatch-arg=--exclude=ga03
+--framework-port auto
+--disable-metrics
+--disable-dcgm-exporter
+--tunnel-url wss://api.aisc.hpi.de:443
+--tunnel-token-file ~/otela-tunnel-token
+--tunnel-target otela-head.litellm.svc.cluster.local:43905
