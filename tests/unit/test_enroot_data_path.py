@@ -37,6 +37,7 @@ def test_block_rendered_before_the_first_srun_with_user_unexpanded() -> None:
     master = render_master(_make_args(enroot_data_path=_PATH))
     assert f'sml_enroot_data="{_PATH}"' in master
     assert master.index("sml_prune_enroot") < master.index("srun --nodes=1")
+    assert 'sml_prune_enroot "$sml_enroot_data" &' in master  # does not delay the job start
 
 
 def _block(master: str) -> str:
@@ -70,7 +71,7 @@ def _run(tmp_path: Path, known_jobs: set[str], home_kind: str, job_id: str = "99
     scontrol.chmod(0o755)
     master = render_master(_make_args(enroot_data_path=str(data)))
     proc = subprocess.run(
-        ["bash", "-euo", "pipefail", "-c", _block(master)],
+        ["bash", "-euo", "pipefail", "-c", _block(master) + "\nwait"],  # the prune runs in the background
         env={
             "PATH": f"{fake_bin}:/usr/bin:/bin",
             "HOME": str(home),

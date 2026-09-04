@@ -658,8 +658,10 @@ def _render_enroot_data_path(launch_args: LaunchArgs) -> str:
     per vLLM job) and ignores ``ENROOT_DATA_PATH`` from the job environment, so
     the only user-level lever is that directory itself: make it a symlink to
     ``enroot_data_path``. Pyxis removes a job's rootfs when the job ends, but a
-    hard-killed job can leave one behind; any ``pyxis_<job>.<step>`` directory
-    whose job Slurm no longer knows is removed. Runs on the batch node, before
+    hard-killed job can leave one behind (on a slow parallel FS the removal
+    is regularly cut short by the step teardown); any ``pyxis_<job>.<step>``
+    directory whose job Slurm no longer knows is removed, in the background so
+    a 30 GB orphan does not delay the job start. Runs on the batch node, before
     the first srun. ``$USER``/``$HOME`` in the configured path expand there.
     """
     return (
@@ -683,7 +685,9 @@ def _render_enroot_data_path(launch_args: LaunchArgs) -> str:
         "        fi\n"
         "    done\n"
         "}\n"
-        'sml_prune_enroot "$sml_enroot_data"\n'
+        "# Background: deleting an orphaned rootfs takes minutes on a parallel FS and\n"
+        "# must not hold up the job; a next launch prunes again if this one is cut short.\n"
+        'sml_prune_enroot "$sml_enroot_data" &\n'
         'if [[ -d "$sml_enroot_link" && ! -L "$sml_enroot_link" ]]; then\n'
         '    sml_prune_enroot "$sml_enroot_link"\n'
         '    rmdir "$sml_enroot_link" 2>/dev/null \\\n'

@@ -45,6 +45,10 @@ whose defaults are upstream behaviour, so `git merge upstream/main` stays clean.
    symlink to `aisc-share/enroot-data/$USER` and removes rootfs left behind by jobs Slurm no
    longer knows, before the first `srun`. Nothing to do per user; if `~/.local/share/enroot`
    already holds a *running* job's rootfs the job only warns and retries next time.
+   Pyxis' own end-of-job removal does not finish on this filesystem (the step teardown cuts
+   it short), so expect one 15–30 GB rootfs per finished job under `enroot-data/<user>/`
+   until that user's next launch prunes it; the prune runs in the background and does not
+   delay the start. Shared dirs are group `aisc-storage`, setgid and group-writable.
    The env toml mounts `hf-cache/` and `vllm-cache/` and sets `HF_HOME` / `VLLM_CACHE_ROOT` to
    them, so weights and torch.compile caches stay out of home as well. Those three shared
    directories must be group-writable for everyone who launches (`chmod g+ws`).
