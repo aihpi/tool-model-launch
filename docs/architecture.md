@@ -18,6 +18,19 @@ flowchart LR
 
 **K8s** = always-on deployment, managed separately. **SLURM** = what SML provisions, time-limited. From the API's and user's perspective, the two are interchangeable — that's what OpenTela buys you.
 
+## Launch workflow
+
+![How an sml advanced launch becomes a Slurm job whose replicas reach the OpenTela head and are served through LiteLLM](assets/sml-workflow.svg)
+
+Left to right:
+
+- **Login node**: `sml advanced` is parsed into a `LaunchArgs`; `render_sbatch_header` and `render_master` turn it into one `master.sh` that embeds every rank script (`head.sh`, `follower.sh`, `router.sh`, the replica health checker and the pool agent) as heredocs, and the launcher submits it with `sbatch` from `~/.sml`.
+- **Batch node**: `master.sh` detects the architecture (`OPENTELA_BIN`, `WSTUNNEL_BIN`), resolves the env TOML, self-extracts the rank scripts into `~/.sml/job-<id>`, starts one `srun --environment=<EDF>` per replica, probes each replica's `/health`, and ends the job when the first critical step exits.
+- **Compute node (container)**: `head.sh` derives the framework port (fixed `8080`, or per job with `--framework-port auto`), optionally opens a wstunnel to a bootstrap peer that is not directly routable, and runs `otela start` with a deterministic identity and a private bootstrap list around the framework process.
+- **Gateway / Kubernetes**: the tunnel ends at the OpenTela head, which registers the worker; LiteLLM's rows point at the head's HTTP API (`/v1/service/<svc>/v1`), and users reach the model through LiteLLM.
+
+Outline colours mark what is upstream sml, what is a new generic option in `src/` (default = upstream behaviour) and what is site configuration under `hpi/`.
+
 ## Components
 
 ```text
@@ -53,6 +66,22 @@ Two independent planes leave the job:
 
 - **Request plane** (right): each replica registers itself on the **OpenTela p2p mesh** at startup. The serving-api gateway resolves model names through OpenTela and forwards requests to a registered peer. Skip the registration with `--disable-opentela` (see below).
 - **Metrics plane** (bottom): DCGM and vmagent scrape per-GPU and per-process metrics and ship them via remote-write to the metrics backend (a Prometheus-compatible endpoint, `prometheus-dev.swissai.svc.cscs.ch/api/v1/write`), which Grafana reads from. This is distinct from the launch-telemetry endpoint (`sml-dev.swissai.svc.cscs.ch/launches`), which only receives a one-time launch-metadata POST and carries no metrics. Separate system; not OpenTela.
+
+## Site-specific options
+
+Everything cluster-specific is a flag or an environment variable whose default is the CSCS behaviour, so another site needs configuration rather than code:
+
+| Option | Default | Purpose |
+| --- | --- | --- |
+| `--gres`, `--cpus-per-task`, `--mem`, `--no-exclusive`, `--sbatch-arg=…` | whole exclusive nodes, no resource requests | shared-node clusters |
+| `--framework-port auto` | `8080` | one port per job derived from `SLURM_JOB_ID` when nodes are shared |
+| `--tunnel-url`, `--tunnel-token-file`, `--tunnel-target` | none | wstunnel to an OpenTela head that is not directly routable; a bare peer ID in `--opentela-bootstrap-addr` is reached through it |
+| `--opentela-service-name` | `llm` | service a job advertises; the [GPU pool](gpu-pool.md) uses `pool` |
+| `SML_OPENTELA_BOOTSTRAP_ADDR` | prod peer | default for `--opentela-bootstrap-addr` |
+| `SML_TELEMETRY_ENDPOINT` | CSCS sink | launch-telemetry sink; empty disables |
+| `SML_HEALTH_CHECK_URL`, `SML_HEALTH_MODEL_PREFIX` | CSCS gateway, no prefix | where the health panel probes and how the gateway names the model |
+
+Every OpenTela peer also gets `--bootstrap.static` (only our head, never the public bootstrap list), a per-step `--config-dir` and a deterministic `--seed`, so replicas on a shared home are distinct peers.
 
 ## Repos in the serving stack
 

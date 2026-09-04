@@ -85,6 +85,10 @@ curl -s -X POST https://api.aisc.hpi.de/model/new \
 
 `<user>` is the Slurm username: sml namespaces every served name as `<user>/<vendor>/<model>`.
 
+## GPU pool: many models on one H100
+
+`hpi/pool.toml` + `hpi/examples/pool.sh` run one job that keeps every listed model resident but asleep and wakes the requested one in seconds ([docs/gpu-pool.md](../docs/gpu-pool.md)). Register each catalog model in LiteLLM with the **same** `api_base`, `http://otela-head.litellm.svc.cluster.local:8092/v1/service/pool/v1`, and `model: hosted_vllm/<served_name>`. Replace `<user>` in `pool.toml` with your Slurm username before submitting.
+
 ## Verify
 
 1. Job log: wstunnel connected, `bootstrap_connected=true`, relay reservation on
