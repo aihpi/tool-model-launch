@@ -24,6 +24,8 @@ whose defaults are upstream behaviour, so `git merge upstream/main` stays clean.
      otela-share/prod/wstunnel-amd64    # wstunnel v10.7.1
      images/vllm-openai.sqsh            # see below
      hf-cache/                          # HF_HOME
+     vllm-cache/                        # VLLM_CACHE_ROOT
+     enroot-data/<user>/                # pyxis container rootfs (see step 3)
    ```
 
    The layout mirrors upstream's `/opentelabin/{prod,dev}/otela-<arch>`, which the launch
@@ -36,10 +38,23 @@ whose defaults are upstream behaviour, so `git merge upstream/main` stays clean.
    enroot import -o /PATH/TO/aisc-share/images/vllm-openai.sqsh docker://vllm/vllm-openai:<tag>
    ```
 
-3. **Token**: `~/otela-tunnel-token` on the Slurm home, mode 600. The job reads it at run time;
+3. **Keep pyxis out of your home**: pyxis unpacks every container rootfs into
+   `$XDG_DATA_HOME/enroot` (`~/.local/share/enroot`), i.e. ~30 GB per running vLLM job on the
+   200 GB home quota, and it ignores `ENROOT_DATA_PATH` from the job environment. Point that
+   directory at the shared dir once:
+
+   ```bash
+   mkdir -p /PATH/TO/aisc-share/enroot-data/$USER && rm -rf ~/.local/share/enroot
+   ln -s /PATH/TO/aisc-share/enroot-data/$USER ~/.local/share/enroot
+   ```
+
+   The env toml mounts `hf-cache/` and `vllm-cache/` and sets `HF_HOME` / `VLLM_CACHE_ROOT` to
+   them, so weights and torch.compile caches stay out of home as well.
+
+4. **Token**: `~/otela-tunnel-token` on the Slurm home, mode 600. The job reads it at run time;
    it never appears in scripts, labels or `squeue`.
 
-4. **sml**: `source hpi/sml.env`, then `sml init` choosing the `slurm` launcher. The
+5. **sml**: `source hpi/sml.env`, then `sml init` choosing the `slurm` launcher. The
    "research API key" is a LiteLLM key that has the `otela-test` access group.
 
 ## Launch

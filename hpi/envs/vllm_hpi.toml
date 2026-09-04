@@ -12,11 +12,14 @@ mounts = [
   # HF_HOME below must be visible inside the container, or every job downloads
   # its weights into the ephemeral container overlay again.
   "/sc/projects/sci-aisc/aisc-share/hf-cache",
+  "/sc/projects/sci-aisc/aisc-share/vllm-cache",
 ]
 
 workdir = "/opt"
 
 [env]
 HF_HOME = "/sc/projects/sci-aisc/aisc-share/hf-cache"
+# torch.compile / cuda-graph caches; default is ~/.cache/vllm on the 200 GB home.
+VLLM_CACHE_ROOT = "/sc/projects/sci-aisc/aisc-share/vllm-cache"
 # The vllm-openai image ships no nvcc; FlashInfer's JIT sampler needs it.
 VLLM_USE_FLASHINFER_SAMPLER = "0"
