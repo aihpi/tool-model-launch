@@ -102,6 +102,16 @@ class LaunchArgs(BaseModel):
     dcgm_exporter_binary: str = "/capstor/store/cscs/swissai/infra01/opentela-share/dcgm-exporter"
     disable_dcgm_exporter: bool = False
     disable_metrics: bool = False
+    # Site-specific #SBATCH knobs. The defaults reproduce the historical header
+    # (whole exclusive nodes, no GRES/CPU/memory request) for clusters where a
+    # job owns its node; shared-node clusters set them per launch. sbatch_args
+    # is a verbatim passthrough for anything without its own knob
+    # (--exclude, --constraint, --qos, ...).
+    exclusive: bool = True
+    gres: str | None = None
+    cpus_per_task: int | None = None
+    mem: str | None = None
+    sbatch_args: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _validate(self) -> "LaunchArgs":
@@ -126,18 +136,28 @@ class LaunchArgs(BaseModel):
             f"--job-name={self.job_name}",
             f"--account={self.account}",
             f"--time={self.time}",
-            "--exclusive",
+        ]
+        if self.exclusive:
+            args.append("--exclusive")
+        args += [
             f"--nodes={self.total_nodes}",
             f"--partition={self.partition}",
             "--output=logs/%j/log.out",
             "--error=logs/%j/log.err",
         ]
+        if self.gres:
+            args.append(f"--gres={self.gres}")
+        if self.cpus_per_task:
+            args.append(f"--cpus-per-task={self.cpus_per_task}")
+        if self.mem:
+            args.append(f"--mem={self.mem}")
         if reservation:
             args.append(f"--reservation={reservation}")
         if self.begin:
             args.append(f"--begin={self.begin}")
         if self.dependency:
             args.append(f"--dependency={self.dependency}")
+        args.extend(self.sbatch_args)
         return args
 
     def to_job_env(self) -> dict[str, str]:

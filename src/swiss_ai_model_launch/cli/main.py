@@ -255,6 +255,45 @@ def _add_advanced_launch_arguments(
         help="SLURM reservation name (optional, env: SML_RESERVATION).",
     )
     advanced_parser.add_argument(
+        "--gres",
+        dest="gres",
+        default=None,
+        metavar="SPEC",
+        help="SLURM --gres request, e.g. gpu:4 (default: none). Needed on shared-node clusters.",
+    )
+    advanced_parser.add_argument(
+        "--cpus-per-task",
+        dest="cpus_per_task",
+        type=int,
+        default=None,
+        metavar="N",
+        help="SLURM --cpus-per-task (default: scheduler default).",
+    )
+    advanced_parser.add_argument(
+        "--mem",
+        dest="mem",
+        default=None,
+        metavar="SIZE",
+        help="SLURM --mem per node, e.g. 48G (default: scheduler default).",
+    )
+    advanced_parser.add_argument(
+        "--no-exclusive",
+        dest="exclusive",
+        action="store_false",
+        help="Do not request whole nodes (#SBATCH --exclusive). Combine with --gres on shared-node clusters.",
+    )
+    advanced_parser.add_argument(
+        "--sbatch-arg",
+        dest="sbatch_args",
+        action="append",
+        default=[],
+        metavar="ARG",
+        help=(
+            "Extra #SBATCH option appended verbatim; repeatable. Write it with '=' "
+            "so argparse does not read it as a flag: --sbatch-arg=--exclude=node01."
+        ),
+    )
+    advanced_parser.add_argument(
         "--served-model-name",
         dest="served_model_name",
         default=None,
@@ -835,6 +874,11 @@ def build_launch_args_from_advanced(
         disable_dcgm_exporter=args.disable_dcgm_exporter,
         disable_metrics=args.disable_metrics,
         telemetry_endpoint=telemetry_endpoint,
+        exclusive=getattr(args, "exclusive", True),
+        gres=getattr(args, "gres", None),
+        cpus_per_task=getattr(args, "cpus_per_task", None),
+        mem=getattr(args, "mem", None),
+        sbatch_args=list(getattr(args, "sbatch_args", None) or []),
     )
 
 
