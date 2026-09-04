@@ -3,9 +3,13 @@ from __future__ import annotations
 import importlib.metadata
 import shlex
 from importlib.resources import files
+from pathlib import Path
 from typing import ClassVar
 
+import tomllib
+
 from swiss_ai_model_launch.launchers.launch_args import (
+    CONTAINER_SPEC_PYXIS,
     FRAMEWORK_PORT_AUTO,
     FRAMEWORK_PORT_AUTO_EXPR,
     ROUTER_SGLANG,
@@ -595,6 +599,64 @@ def _render_env_file_resolution(launch_args: LaunchArgs) -> str:
     )
 
 
+def _render_pyxis_container_args(launch_args: LaunchArgs) -> str:
+    """Translate the env toml into stock pyxis flags (``container_spec == "pyxis"``).
+
+    CSCS' pyxis accepts the toml directly via ``--environment``; unmodified pyxis
+    has no such flag, only ``--container-image/--container-mounts/
+    --container-workdir/--container-env``. The toml is read here, at render time,
+    and the flags land in the ``SML_CONTAINER_ARGS`` array every srun expands.
+    An ``{arch}`` placeholder in the image path becomes ``${SML_ARCH}``, which
+    the arch detection block defines earlier in master.sh. ``[env]`` entries are
+    exported on the batch host and pinned with ``--container-env`` so image
+    defaults cannot shadow them. ``[annotations]`` (CSCS container hooks) have no
+    pyxis equivalent and are ignored. The image entrypoint is skipped unless the
+    toml sets ``entrypoint = true``: the rank script is the command, an
+    entrypoint like vllm-openai's ``vllm serve`` would swallow it.
+    """
+    env_path = Path(launch_args.environment).expanduser()
+    try:
+        spec = tomllib.loads(env_path.read_text())
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(
+            f"--container-spec pyxis needs the env toml at render time; not found: {env_path}"
+        ) from exc
+    image = str(spec["image"]).replace("{arch}", "${SML_ARCH}")
+    mounts = [m if ":" in m else f"{m}:{m}" for m in spec.get("mounts", [])]
+    # RANKS_DIR (the self-extracted rank scripts) is bound per srun in EDF mode.
+    mounts.append("$RANKS_DIR:$RANKS_DIR")
+    lines = [
+        "# Container flags for sites running stock pyxis (no --environment/EDF support);",
+        "# translated from the env toml at render time.",
+        "SML_CONTAINER_ARGS=(",
+        f'    --container-image="{image}"',
+        f'    --container-mounts="{",".join(mounts)}"',
+    ]
+    if spec.get("workdir"):
+        lines.append(f'    --container-workdir="{spec["workdir"]}"')
+    lines.append("    --container-entrypoint" if spec.get("entrypoint") is True else "    --no-container-entrypoint")
+    lines.append(")")
+    env = spec.get("env", {})
+    for key, value in env.items():
+        lines.append(f"export {key}={shlex.quote(str(value))}")
+    if env:
+        lines.append(f'SML_CONTAINER_ARGS+=(--container-env="{",".join(env)}")')
+    return "\n".join(lines)
+
+
+def _render_container_srun_flags(launch_args: LaunchArgs) -> str:
+    """The srun lines that put a step into the env toml's container."""
+    if launch_args.container_spec == CONTAINER_SPEC_PYXIS:
+        return '    "${SML_CONTAINER_ARGS[@]}" \\\n'
+    return (
+        # Bind RANKS_DIR into the container so the rank script (on the
+        # host's shared FS) is visible to the bash invocation inside the
+        # pyxis container. Attached per-srun rather than via the env toml's
+        # static mount list, which is being narrowed and read-only-ed.
+        '    --container-mounts="$RANKS_DIR:$RANKS_DIR" \\\n    --environment="${SML_ENV_FILE}" \\\n'
+    )
+
+
 def _render_node_mapping() -> str:
     return (
         'mapfile -t nodes < <(scontrol show hostnames "$SLURM_NODELIST")\n'
@@ -635,12 +697,7 @@ def _render_replica_launches(launch_args: LaunchArgs) -> str:
             f"# {comment}\n"
             f'srun --nodes=1 --ntasks=1 --nodelist="${{nodes[{node_index}]}}" \\\n'
             f"    --container-writable \\\n"
-            # Bind RANKS_DIR into the container so the rank script (on the
-            # host's shared FS) is visible to the bash invocation inside the
-            # pyxis container. Attached per-srun rather than via the env toml's
-            # static mount list, which is being narrowed and read-only-ed.
-            f'    --container-mounts="$RANKS_DIR:$RANKS_DIR" \\\n'
-            '    --environment="${SML_ENV_FILE}" \\\n'
+            f"{_render_container_srun_flags(launch_args)}"
             # Per-replica stdout/stderr (the batch script's own log.out/log.err
             # only carries the master's orchestration output).
             f'    --output="logs/${{SLURM_JOB_ID}}/{log_base}.out" \\\n'
@@ -827,8 +884,7 @@ def _render_router_launch(launch_args: LaunchArgs) -> str:
         'router_host_ip="$replica_0_head_ip"\n'
         'srun --nodes=1 --ntasks=1 --nodelist="$router_host_node" \\\n'
         "    --container-writable \\\n"
-        '    --container-mounts="$RANKS_DIR:$RANKS_DIR" \\\n'
-        '    --environment="${SML_ENV_FILE}" \\\n'
+        f"{_render_container_srun_flags(launch_args)}"
         "    --overlap \\\n"
         '    --output="logs/${SLURM_JOB_ID}/router.out" \\\n'
         '    --error="logs/${SLURM_JOB_ID}/router.err" \\\n'
@@ -919,6 +975,8 @@ def render_master(launch_args: LaunchArgs) -> str:
 
     sections.append(_render_arch_detection(launch_args))
     sections.append(_render_env_file_resolution(launch_args))
+    if launch_args.container_spec == CONTAINER_SPEC_PYXIS:
+        sections.append(_render_pyxis_container_args(launch_args))
     sections.append(_render_node_mapping())
 
     topology = launch_args.topology

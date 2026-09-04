@@ -30,6 +30,7 @@ from swiss_ai_model_launch.launchers.firecrest_auth import build_client
 from swiss_ai_model_launch.launchers.framework import OPENTELA_BOOTSTRAP_ADDR_DEV, render_master, render_rank_scripts
 from swiss_ai_model_launch.launchers.job_status import JobStatus
 from swiss_ai_model_launch.launchers.launch_args import (
+    CONTAINER_SPEC_EDF,
     DEFAULT_MAX_JOB_TIME,
     FRAMEWORK_PORT,
     FRAMEWORK_PORT_AUTO,
@@ -364,6 +365,17 @@ def _add_advanced_launch_arguments(
         help=(
             f"Framework HTTP port (default: {FRAMEWORK_PORT}). 'auto' derives a per-job port "
             "from SLURM_JOB_ID at run time, for clusters where nodes are shared between jobs."
+        ),
+    )
+    advanced_parser.add_argument(
+        "--container-spec",
+        dest="container_spec",
+        choices=("edf", "pyxis"),
+        default=os.environ.get("SML_CONTAINER_SPEC") or CONTAINER_SPEC_EDF,
+        help=(
+            "How the env toml reaches srun (default: edf, env: SML_CONTAINER_SPEC). 'edf' passes it to "
+            "pyxis' --environment flag (CSCS); 'pyxis' translates it into stock --container-* flags for "
+            "clusters whose pyxis has no EDF support."
         ),
     )
     advanced_parser.add_argument(
@@ -938,6 +950,7 @@ def build_launch_args_from_advanced(
         tunnel_url=getattr(args, "tunnel_url", None),
         tunnel_token_file=getattr(args, "tunnel_token_file", None),
         tunnel_target=getattr(args, "tunnel_target", None),
+        container_spec=getattr(args, "container_spec", CONTAINER_SPEC_EDF),
     )
 
 

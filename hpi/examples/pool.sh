@@ -6,6 +6,7 @@
 sml advanced \
   --framework pool \
   --environment hpi/envs/vllm_hpi.toml \
+  --container-spec pyxis \
   --served-model-name pool \
   --opentela-service-name pool \
   --gres gpu:1 \

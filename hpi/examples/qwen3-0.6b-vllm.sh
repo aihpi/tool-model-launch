@@ -6,6 +6,7 @@
 sml advanced \
   --framework vllm \
   --environment hpi/envs/vllm_hpi.toml \
+  --container-spec pyxis \
   --gres gpu:1 \
   --no-exclusive \
   --cpus-per-task 8 \

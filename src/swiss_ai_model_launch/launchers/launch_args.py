@@ -25,6 +25,11 @@ FRAMEWORK_PORT = 8080
 FRAMEWORK_PORT_AUTO = "auto"
 FRAMEWORK_PORT_AUTO_EXPR = "$((20000 + SLURM_JOB_ID % 10000))"
 
+ContainerSpec = Literal["edf", "pyxis"]
+CONTAINER_SPEC_EDF: ContainerSpec = "edf"
+CONTAINER_SPEC_PYXIS: ContainerSpec = "pyxis"
+
+
 TELEMETRY_ENDPOINT = "https://sml-dev.swissai.svc.cscs.ch/launches"
 
 
@@ -136,6 +141,11 @@ class LaunchArgs(BaseModel):
     tunnel_url: str | None = None
     tunnel_token_file: str | None = None
     tunnel_target: str | None = None
+    # How the env toml reaches srun. "edf" hands the file to pyxis' CSCS-only
+    # `--environment` flag (upstream behaviour); "pyxis" translates it at render
+    # time into stock `--container-image/--container-mounts/--container-workdir`
+    # flags plus exported env for sites running unmodified pyxis.
+    container_spec: ContainerSpec = CONTAINER_SPEC_EDF
 
     @model_validator(mode="after")
     def _validate(self) -> "LaunchArgs":
