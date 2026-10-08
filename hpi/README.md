@@ -133,7 +133,10 @@ Dry run without submitting: append `--output-script /tmp/check` and read `master
 ## Register in LiteLLM
 
 One row per served name (replicas are balanced by OpenTela, not LiteLLM), via the admin API, not
-`config.yaml`:
+`config.yaml`. All single-model rows share the same `api_base`: OpenTela routes the `llm` service by
+the requested model. [ADR-0003](../docs/adrs/0003-litellm-registration.md) proposes a reconciler that
+adds and removes these rows automatically.
+
 
 ```bash
 curl -s -X POST https://api.aisc.hpi.de/model/new \
