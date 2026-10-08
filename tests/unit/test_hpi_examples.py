@@ -2,6 +2,7 @@
 """Render the HPI example scripts (hpi/examples) through the production parser
 and check the result is valid bash with the shape hpi/README.md promises."""
 
+import re
 import shutil
 import subprocess
 import sys
@@ -9,24 +10,47 @@ from pathlib import Path
 
 import pytest
 
-from swiss_ai_model_launch.cli.main import build_launch_args_from_advanced
-from swiss_ai_model_launch.launchers.framework import render_master, render_rank_scripts
-from swiss_ai_model_launch.launchers.utils import render_sbatch_header
-from tests.unit.test_examples import _parse_sml_advanced_script
+from tests.unit.test_recipes import render_hpi
 
 _HAS_SHELLCHECK = shutil.which("shellcheck") is not None
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _EXAMPLES = sorted(str(p.relative_to(_REPO_ROOT)) for p in (_REPO_ROOT / "hpi" / "examples").glob("*.sh"))
 
 
+_RECIPE_REF = re.compile(r'--recipe "\$\(dirname "\$\{BASH_SOURCE\[0\]\}"\)/\.\./recipes/([^"]+)"')
+
+
+def _recipe_of(example_path: str) -> Path:
+    match = _RECIPE_REF.search((_REPO_ROOT / example_path).read_text())
+    assert match, f"{example_path} does not call sml advanced --recipe <hpi/recipes/...>"
+    return _REPO_ROOT / "hpi" / "recipes" / match.group(1)
+
+
 def _render(example_path: str) -> dict[str, str]:
-    # The scripts resolve $HPI from their own location; the parser sees plain text.
-    content = (_REPO_ROOT / example_path).read_text().replace("$HPI", str(_REPO_ROOT / "hpi"))
-    args = _parse_sml_advanced_script(content)
-    launch_args = build_launch_args_from_advanced(args, username="alice", account="aisc-staff", partition="aisc-batch")
-    out = {"master.sh": render_sbatch_header(launch_args) + render_master(launch_args)}
-    out.update(render_rank_scripts(launch_args))
-    return out
+    return render_hpi(["--recipe", str(_recipe_of(example_path))])
+
+
+@pytest.mark.parametrize("example_path", _EXAMPLES, ids=lambda p: Path(p).stem)
+def test_hpi_example_runs_sml_with_its_recipe(tmp_path: Path, example_path: str) -> None:
+    """Run the wrapper for real with a fake `sml` that echoes its argv: the recipe
+    path must resolve to an existing file and extra flags must pass through."""
+    fake = tmp_path / "sml"
+    fake.write_text('#!/bin/bash\nprintf "%s\\n" "$@"\n')
+    fake.chmod(0o755)
+    cwd = tmp_path / "elsewhere"
+    cwd.mkdir()
+    proc = subprocess.run(
+        ["bash", str(_REPO_ROOT / example_path), "--mem", "8G"],
+        cwd=cwd,
+        env={"PATH": f"{tmp_path}:/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0, proc.stderr
+    argv = proc.stdout.splitlines()
+    assert argv[:2] == ["advanced", "--recipe"]
+    assert Path(argv[2]).resolve() == _recipe_of(example_path).resolve()
+    assert argv[3:] == ["--mem", "8G"]
 
 
 def test_hpi_examples_exist() -> None:

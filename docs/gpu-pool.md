@@ -53,14 +53,19 @@ args = "--max-model-len 32768"        # extra vllm serve arguments
 - `--time` the partition's maximum, plus `--consecutive` so the pool is replaced before it expires; the successor boots its catalog while the old pool still serves.
 - `--framework-args "--config <path visible inside the container>"`; sml injects `--port` itself.
 
-```bash title="hpi/examples/pool.sh (abridged)"
-sml advanced --framework pool --environment hpi/envs/vllm_hpi.toml \
-  --served-model-name pool --opentela-service-name pool \
-  --gres gpu:h100:1 --no-exclusive --mem 100G --framework-port auto \
-  --tunnel-url wss://api.aisc.hpi.de:443 --tunnel-token-file ~/otela-tunnel-token \
-  --tunnel-target otela-head.litellm.svc.cluster.local:43905 \
-  --framework-args "--config ~/tool-model-launch/hpi/pool.toml"
+```text title="hpi/recipes/pool.args (launch: sml advanced --recipe pool)"
+--framework pool
+--served-model-name pool
+--opentela-service-name pool
+--gres gpu:h100:1
+--cpus-per-task 16
+--mem 100G
+--time 12:00:00
+--framework-args "--config ~/.sml/pool.toml"
 ```
+
+The site flags (pyxis, tunnel, `--no-exclusive`, `--framework-port auto`) come from
+`hpi/recipes/_site.args`, which `hpi/sml.env` prepends to every `sml advanced`.
 
 ## Registering the models
 

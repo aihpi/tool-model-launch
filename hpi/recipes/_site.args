@@ -1,6 +1,6 @@
-# HPI AISC site flags shared by every recipe: usage  sml advanced @hpi/recipes/_site.args @hpi/recipes/<model>.args
-# Paths are those of the shared install (/sc/projects/sci-aisc/aisc-share/sml); see hpi/README.md.
---environment /sc/projects/sci-aisc/aisc-share/sml/src/hpi/envs/vllm_hpi.toml
+# HPI AISC site flags. hpi/sml.env sets SML_SITE_ARGS to this file, so sml prepends it to
+# every `sml advanced`; recipes only carry what differs per model. The env toml comes from
+# SML_ENVIRONMENT (also set in hpi/sml.env, next to this file).
 --container-spec pyxis
 --enroot-data-path '/sc/projects/sci-aisc/aisc-share/enroot-data/$USER'
 --no-exclusive

@@ -20,7 +20,8 @@ A ready-made install lives in the project share; every AISC staff member can use
 ```bash
 source /sc/projects/sci-aisc/aisc-share/sml/env.sh   # puts `sml` on PATH with the HPI defaults
 sml init                                              # once: asks only for your LiteLLM key
-bash $SML_HOME/src/hpi/examples/qwen3-0.6b-vllm.sh    # launch; the examples run from any directory
+sml recipes                                           # what can be launched
+sml advanced --recipe qwen3-0.6b                      # launch one
 ```
 
 `/sc/projects/sci-aisc/aisc-share/sml/bin/sml` also works without sourcing anything. The install
@@ -75,27 +76,40 @@ when setting up a new site or shared directory.
    so it only asks for your LiteLLM API key: one for `https://api.aisc.hpi.de` with the
    `otela-test` access group. `sml.env` also renames the TUI and prompts to "HPI AISC".
 
-## Launch with a recipe (no script)
+## Launch with a recipe
 
-`sml advanced` reads flags from files (`@file`, shell-style lines, `#` comments). The site
-constants live in one file and each model in another:
+A recipe is a small `*.args` file with the flags that differ per model (shell-style lines,
+`#` comments). `hpi/sml.env` sets three variables so nothing else is needed:
+
+| Variable | Value | Effect |
+| --- | --- | --- |
+| `SML_SITE_ARGS` | `hpi/recipes/_site.args` | site constants (pyxis, tunnel, ports, exclusions), prepended to every `sml advanced` |
+| `SML_ENVIRONMENT` | `hpi/envs/vllm_hpi.toml` | default `--environment` |
+| `SML_RECIPE_PATH` | `~/.sml/recipes`, `/sc/projects/sci-aisc/aisc-share/recipes`, `hpi/recipes` | where `--recipe NAME` looks, first hit wins |
 
 ```bash
-sml advanced @$SML_HOME/src/hpi/recipes/_site.args @$SML_HOME/src/hpi/recipes/qwen3-0.6b.args
+sml recipes                                  # list, with the file each name comes from
+sml advanced --recipe qwen3-0.6b             # launch
+sml advanced --recipe qwen3-0.6b --mem 64G   # flags after the recipe override it
+sml advanced @~/somewhere/my-model.args      # any file works too
 ```
 
-Copy `qwen3-0.6b.args`, change `--model`, `--served-model-name`, `--mem`, `--time`, and launch the
-copy the same way; extra flags on the command line override the files. `pool.args` launches the
-[GPU pool](#gpu-pool-many-models-on-one-h100). The recipes name the shared install's paths.
+**Your own model:** copy `hpi/recipes/qwen3-0.6b.args` to `~/.sml/recipes/<name>.args`, change
+`--model` (a Hub id, or an absolute path to an HF-format checkpoint under
+`/sc/projects/sci-aisc/aisc-share`), `--served-model-name`, `--mem` and `--time`, then
+`sml advanced --recipe <name>`. The first comment line is what `sml recipes` shows. To share it,
+put it into `/sc/projects/sci-aisc/aisc-share/recipes/`. `--no-site-args` launches without the site
+file (for non-HPI flags). `pool.args` launches the [GPU pool](#gpu-pool-many-models-on-one-h100).
 
 ## Launch
 
 ```bash
 source hpi/sml.env
-bash hpi/examples/qwen3-0.6b-vllm.sh
+sml advanced --recipe qwen3-0.6b      # or: bash hpi/examples/qwen3-0.6b-vllm.sh (same thing)
 ```
 
-The example is the `sml advanced` form of the reference `~/otela-worker.sbatch`. What the flags do:
+The site file plus `qwen3-0.6b.args` are the `sml advanced` form of the reference
+`~/otela-worker.sbatch`. What the flags do:
 
 | Flag | Why |
 | --- | --- |

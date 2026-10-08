@@ -7,11 +7,12 @@ from pathlib import Path
 import pytest
 
 from swiss_ai_model_launch.cli.main import _build_parser, build_launch_args_from_advanced
+from swiss_ai_model_launch.cli.recipes import expand_argv
 from swiss_ai_model_launch.launchers.framework import render_master, render_rank_scripts
+from swiss_ai_model_launch.launchers.utils import render_sbatch_header
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _RECIPES = _REPO_ROOT / "hpi" / "recipes"
-_SHARED_HPI = "/sc/projects/sci-aisc/aisc-share/sml/src/hpi"
 
 
 def test_args_file_accepts_shell_style_lines(tmp_path: Path) -> None:
@@ -38,19 +39,23 @@ def test_several_files_and_explicit_flags_combine(tmp_path: Path) -> None:
     assert args.exclusive is False and args.framework_port == "auto" and args.mem == "8G"
 
 
-def _render_recipe(name: str, tmp_path: Path) -> dict[str, str]:
-    # The recipes name the shared install's paths; point them at this checkout.
-    files = []
-    for stem in ("_site", name):
-        text = (_RECIPES / f"{stem}.args").read_text().replace(_SHARED_HPI, str(_REPO_ROOT / "hpi"))
-        f = tmp_path / f"{stem}.args"
-        f.write_text(text)
-        files.append(f"@{f}")
-    args = _build_parser().parse_args(["advanced", *files])
+def render_hpi(argv_tail: list[str]) -> dict[str, str]:
+    """Render ``sml advanced <argv_tail>`` the way the HPI env does it: site file
+    prepended, recipes resolved on hpi/recipes, env toml from hpi/envs. Returns
+    master.sh (with its #SBATCH header) and the rank scripts."""
+    env = {"SML_SITE_ARGS": str(_RECIPES / "_site.args"), "SML_RECIPE_PATH": str(_RECIPES)}
+    argv = expand_argv(
+        ["advanced", "--environment", str(_REPO_ROOT / "hpi" / "envs" / "vllm_hpi.toml"), *argv_tail], env
+    )
+    args = _build_parser().parse_args(argv)
     launch_args = build_launch_args_from_advanced(args, username="alice", account="aisc-staff", partition="aisc-batch")
-    out = {"master.sh": render_master(launch_args)}
+    out = {"master.sh": render_sbatch_header(launch_args) + render_master(launch_args)}
     out.update(render_rank_scripts(launch_args))
     return out
+
+
+def _render_recipe(name: str, tmp_path: Path) -> dict[str, str]:
+    return render_hpi(["--recipe", name])
 
 
 @pytest.mark.parametrize("name", ["qwen3-0.6b", "pool"])

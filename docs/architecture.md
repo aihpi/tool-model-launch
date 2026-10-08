@@ -81,6 +81,7 @@ Everything cluster-specific is a flag or an environment variable whose default i
 | `--enroot-data-path` | pyxis default (`~/.local/share/enroot`) | where stock pyxis unpacks container rootfs; stale rootfs of finished jobs are pruned |
 | `SML_OPENTELA_BOOTSTRAP_ADDR` | prod peer | default for `--opentela-bootstrap-addr` |
 | `SML_TELEMETRY_ENDPOINT` | CSCS sink | launch-telemetry sink; empty disables |
+| `SML_SITE_ARGS`, `SML_RECIPE_PATH`, `SML_ENVIRONMENT` | unset | recipes: a site flags file prepended to `sml advanced`, the search path for `--recipe NAME` / `sml recipes`, the default `--environment` |
 | `SML_LAUNCHER` | asked in `sml init` | preselects the launcher so `sml init` only asks for the key |
 | `SML_SITE_NAME`, `SML_HEALTH_KEY_NAME`, `SML_HEALTH_KEY_HELP` | Swiss AI wording | user-visible branding: TUI title, CLI description and the `sml init` key prompt |
 | `SML_HEALTH_CHECK_URL`, `SML_HEALTH_MODEL_PREFIX` | CSCS gateway, no prefix | where the health panel probes and how the gateway names the model |

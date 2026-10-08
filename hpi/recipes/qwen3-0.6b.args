@@ -1,5 +1,7 @@
-# One vLLM replica of Qwen3-0.6B on one shared H100:
-#   sml advanced @hpi/recipes/_site.args @hpi/recipes/qwen3-0.6b.args
+# Qwen3-0.6B, one vLLM replica on one shared H100 (the reference job)
+#   sml advanced --recipe qwen3-0.6b
+# To serve another model: copy this file to ~/.sml/recipes/<name>.args and change
+# --model, --served-model-name, --mem and --time.
 --framework vllm
 --gres gpu:h100:1
 --cpus-per-task 8

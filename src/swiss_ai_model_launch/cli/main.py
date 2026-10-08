@@ -15,6 +15,7 @@ from typing import Any, cast
 import firecrest as f7t
 
 from swiss_ai_model_launch import site
+from swiss_ai_model_launch.cli import recipes
 from swiss_ai_model_launch.cli.configuration import InitConfig, optional_value
 from swiss_ai_model_launch.cli.configuration.models import (
     ChainConfiguration,
@@ -190,12 +191,29 @@ def _add_advanced_launch_arguments(
         required=True,
         help="Inference framework to use (e.g. sglang, vllm).",
     )
+    default_environment = os.environ.get("SML_ENVIRONMENT") or None
     advanced_parser.add_argument(
         "--environment",
         dest="slurm_environment",
-        required=True,
+        default=default_environment,
+        required=default_environment is None,
         metavar="PATH",
-        help="Local path to the environment .toml file.",
+        help="Local path to the environment .toml file (env: SML_ENVIRONMENT).",
+    )
+    # Consumed by recipes.expand_argv before parsing; declared here for --help and
+    # so that one written inside an @file is reported instead of ignored.
+    advanced_parser.add_argument(
+        "--recipe",
+        dest="recipe_in_file",
+        default=None,
+        metavar="NAME",
+        help="Read flags from recipe NAME on SML_RECIPE_PATH (or a path); see `sml recipes`.",
+    )
+    advanced_parser.add_argument(
+        "--no-site-args",
+        dest="no_site_args_in_file",
+        action="store_true",
+        help="Do not prepend the site flags file (SML_SITE_ARGS).",
     )
     advanced_parser.add_argument(
         "--framework-args",
@@ -477,7 +495,10 @@ def _build_parser() -> argparse.ArgumentParser:
         description=f"{site.SITE_NAME} Model Launcher",
         # `sml advanced @recipe.args` reads flags from a file (see hpi/recipes).
         fromfile_prefix_chars="@",
-        epilog="Flags can be read from a file: sml advanced @recipe.args (one or more flags per line, # comments).",
+        epilog=(
+            "Flags can be read from a file: sml advanced @recipe.args (one or more flags per line, # comments), "
+            "or by name: sml advanced --recipe NAME (see `sml recipes`)."
+        ),
     )
     _meta = importlib.metadata.metadata("swiss-ai-model-launch")
     parser.add_argument(
@@ -521,6 +542,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     subparsers.add_parser("mcp", help="Start the SML MCP server")
+    subparsers.add_parser("recipes", help="List the launch recipes on SML_RECIPE_PATH")
 
     return parser
 
@@ -1108,14 +1130,27 @@ async def _main(args: argparse.Namespace) -> None:
         )
 
 
+def _parse_cli(parser: argparse.ArgumentParser, argv: list[str]) -> argparse.Namespace:
+    try:
+        expanded = recipes.expand_argv(argv)
+    except recipes.RecipeError as exc:
+        parser.error(str(exc))
+    args = parser.parse_args(expanded)
+    if getattr(args, "recipe_in_file", None) is not None or getattr(args, "no_site_args_in_file", False):
+        parser.error("--recipe and --no-site-args work on the command line only, not inside an @file.")
+    return args
+
+
 def main() -> None:
     parser = _build_parser()
-    args = parser.parse_args()
+    args = _parse_cli(parser, sys.argv[1:])
     if args.subcommand is None:
         default = "preconfigured" if InitConfig.exists() else "init"
         args = parser.parse_args([default])
     if args.subcommand == "mcp":
         _run_mcp()
+    elif args.subcommand == "recipes":
+        print(recipes.format_recipe_table(recipes.list_recipes(recipes.recipe_dirs())))
     else:
         asyncio.run(_main(args))
 
