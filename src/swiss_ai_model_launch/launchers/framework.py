@@ -13,6 +13,8 @@ from swiss_ai_model_launch.launchers.launch_args import (
     CONTAINER_SPEC_PYXIS,
     FRAMEWORK_PORT_AUTO,
     FRAMEWORK_PORT_AUTO_EXPR,
+    OPENTELA_HTTP_PORT_AUTO_EXPR,
+    OPENTELA_P2P_PORT_AUTO_EXPR,
     ROUTER_SGLANG,
     LaunchArgs,
     time_str_to_seconds,
@@ -113,6 +115,13 @@ def _port_json(launch_args: LaunchArgs) -> str:
     return str(launch_args.framework_port)
 
 
+def _opentela_http_port(launch_args: LaunchArgs) -> str:
+    """OpenTela's HTTP API port as written into master.sh (health checker)."""
+    if launch_args.framework_port == FRAMEWORK_PORT_AUTO:
+        return OPENTELA_HTTP_PORT_AUTO_EXPR
+    return str(_OPENTELA_HTTP_PORT)
+
+
 def _render_site_setup(launch_args: LaunchArgs) -> str:
     """Run-time prerequisites shared by every rank script and by master.sh:
     the per-job framework port (when "auto") and the wstunnel to the bootstrap
@@ -120,6 +129,12 @@ def _render_site_setup(launch_args: LaunchArgs) -> str:
     lines: list[str] = []
     if launch_args.framework_port == FRAMEWORK_PORT_AUTO:
         lines.append(f"FRAMEWORK_PORT={FRAMEWORK_PORT_AUTO_EXPR}")
+        if not launch_args.disable_opentela:
+            lines += [
+                "# OpenTela's own ports, per job like the framework port, so jobs can share a node.",
+                f"export OF_PORT={OPENTELA_HTTP_PORT_AUTO_EXPR}",
+                f"OTELA_P2P_PORT={OPENTELA_P2P_PORT_AUTO_EXPR}",
+            ]
     if launch_args.tunnel_url:
         lines += [
             "# Tunnel to the OpenTela head; $TUN is the local end the bootstrap addr points at.",
@@ -232,10 +247,16 @@ def _opentela_identity(launch_args: LaunchArgs) -> str:
     # joins our own head (a private mesh).
     # ponytail: seed = job*1000+step collides once a job has >= 1000 steps; widen
     # the multiplier if that ever happens.
+    ports = (
+        "    --tcpport $OTELA_P2P_PORT \\\n    --udpport $OTELA_P2P_PORT \\\n"
+        if launch_args.framework_port == FRAMEWORK_PORT_AUTO
+        else ""
+    )
     return (
         f'    --bootstrap.static "{_resolve_opentela_bootstrap_addr(launch_args)}" \\\n'
         '    --config-dir "$HOME/.sml/job-${SLURM_JOB_ID}/otela-step-${SLURM_STEP_ID:-0}" \\\n'
         "    --seed $((SLURM_JOB_ID * 1000 + ${SLURM_STEP_ID:-0})) \\\n"
+        f"{ports}"
     )
 
 
@@ -961,7 +982,7 @@ def _render_health_checker(launch_args: LaunchArgs) -> str:
         "if command -v python3 >/dev/null 2>&1; then\n"
         f'    SML_HEALTH_REPORT_PATH="{report_path}" \\\n'
         f"        SML_HEALTH_FRAMEWORK_PORT={launch_args.framework_port_shell} \\\n"
-        f"        SML_HEALTH_OPENTELA_PORT={_OPENTELA_HTTP_PORT} \\\n"
+        f"        SML_HEALTH_OPENTELA_PORT={_opentela_http_port(launch_args)} \\\n"
         f"        SML_HEALTH_INTERVAL={_HEALTH_INTERVAL_SECONDS} \\\n"
         f"        SML_HEALTH_TIMEOUT={_HEALTH_TIMEOUT_SECONDS} \\\n"
         f"        SML_HEALTH_NODES_PER_REPLICA={npr} \\\n"

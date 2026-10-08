@@ -311,3 +311,40 @@ def test_tunnel_token_never_reaches_the_xtrace_log(tmp_path: Path) -> None:
     assert "s3cr3t-token" not in proc.stderr
     assert "wstunnel" in proc.stderr or "WSTUNNEL_BIN" not in proc.stderr  # other lines still traced
     assert "xtrace=" in proc.stdout and "x" in proc.stdout.split("xtrace=")[1]  # set -x restored
+
+
+# ── OpenTela's own ports on shared nodes ─────────────────────────────────────
+
+
+def test_fixed_port_keeps_opentela_default_ports() -> None:
+    out = render_all(_make_args())
+    for content in out.values():
+        assert "OF_PORT" not in content and "--tcpport" not in content
+    assert "SML_HEALTH_OPENTELA_PORT=8092" in render_master(_make_args())
+
+
+def test_auto_port_moves_opentela_ports_per_job(tmp_path: Path) -> None:
+    args = _make_args(framework_port="auto")
+    head = render_all(args)["head.sh"]
+    assert "export OF_PORT=$((40000 + SLURM_JOB_ID % 10000))" in head
+    assert "--tcpport $OTELA_P2P_PORT" in head and "--udpport $OTELA_P2P_PORT" in head
+    assert head.index("OTELA_P2P_PORT=") < head.index("$OPENTELA_BIN start")
+    assert "SML_HEALTH_OPENTELA_PORT=$((40000 + SLURM_JOB_ID % 10000))" in render_master(args)
+    # Two jobs on one node get different ports; run the real setup block.
+    setup = head[: head.index("$OPENTELA_BIN start")]
+    ports = []
+    for job_id in ("2624138", "2624139"):
+        proc = subprocess.run(
+            ["bash", "-c", setup + '\necho "$FRAMEWORK_PORT $OF_PORT $OTELA_P2P_PORT"'],
+            env={"PATH": "/usr/bin:/bin", "SLURM_JOB_ID": job_id},
+            capture_output=True,
+            text=True,
+        )
+        assert proc.returncode == 0, proc.stderr
+        ports.append(proc.stdout.split()[-3:])
+    assert ports == [["24138", "44138", "54138"], ["24139", "44139", "54139"]]
+
+
+def test_auto_port_without_opentela_exports_nothing_for_it() -> None:
+    head = render_all(_make_args(framework_port="auto", disable_opentela=True))["head.sh"]
+    assert "OF_PORT" not in head and "OTELA_P2P_PORT" not in head

@@ -120,7 +120,7 @@ The site file plus `qwen3-0.6b.args` are the `sml advanced` form of the referenc
 | `--gres gpu:h100:1 --no-exclusive --cpus-per-task 8 --mem 48G` | shared nodes; `pot-hpi-aisc-batch` also holds A30 (`gx17v1`) and L40 (`ga03`) nodes, so name the GPU type |
 | `--container-spec pyxis` | the cluster's pyxis has no `--environment` (EDF) flag: the env toml is translated into `--container-image/--container-mounts/--container-workdir/--container-env`, image entrypoint skipped |
 | `--sbatch-arg=--exclude=ga03` | no arm64 binaries |
-| `--framework-port auto` | two jobs may share a node: port from `SLURM_JOB_ID` |
+| `--framework-port auto` | two jobs may share a node: the framework, OpenTela HTTP/libp2p and tunnel ports all derive from `SLURM_JOB_ID` |
 | `--tunnel-url/--tunnel-token-file/--tunnel-target` | wstunnel to the head; the bootstrap addr from `sml.env` is a bare peer ID reached through it |
 | `--disable-metrics --disable-dcgm-exporter` | no Prometheus pipeline here |
 

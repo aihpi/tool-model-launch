@@ -24,6 +24,11 @@ FRAMEWORK_PORT = 8080
 # SLURM_JOB_ID at run time (shared-node clusters; two jobs may land on one node).
 FRAMEWORK_PORT_AUTO = "auto"
 FRAMEWORK_PORT_AUTO_EXPR = "$((20000 + SLURM_JOB_ID % 10000))"
+# With "auto", OpenTela's own ports move per job too, or the second worker on a
+# shared node fails to bind its HTTP API (8092) and libp2p port (43905). The
+# HTTP port is read from OF_PORT (OpenTela's viper env prefix is OF_).
+OPENTELA_HTTP_PORT_AUTO_EXPR = "$((40000 + SLURM_JOB_ID % 10000))"
+OPENTELA_P2P_PORT_AUTO_EXPR = "$((50000 + SLURM_JOB_ID % 10000))"
 
 ContainerSpec = Literal["edf", "pyxis"]
 CONTAINER_SPEC_EDF: ContainerSpec = "edf"

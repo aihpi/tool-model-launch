@@ -74,7 +74,7 @@ Everything cluster-specific is a flag or an environment variable whose default i
 | Option | Default | Purpose |
 | --- | --- | --- |
 | `--gres`, `--cpus-per-task`, `--mem`, `--no-exclusive`, `--sbatch-arg=…` | whole exclusive nodes, no resource requests | shared-node clusters |
-| `--framework-port auto` | `8080` | one port per job derived from `SLURM_JOB_ID` when nodes are shared |
+| `--framework-port auto` | `8080`, OpenTela `8092`/`43905` | per-job ports derived from `SLURM_JOB_ID` when nodes are shared: framework `20000+`, OpenTela HTTP `40000+` (`OF_PORT`), OpenTela libp2p TCP/UDP `50000+`, tunnel `30000+` (each plus `SLURM_JOB_ID % 10000`) |
 | `--tunnel-url`, `--tunnel-token-file`, `--tunnel-target` | none | wstunnel to an OpenTela head that is not directly routable; a bare peer ID in `--opentela-bootstrap-addr` is reached through it |
 | `--container-spec edf\|pyxis` | `edf`: the env toml goes to pyxis' `--environment` flag | `pyxis`: stock pyxis without EDF support; the toml is translated into `--container-image/--container-mounts/--container-workdir/--container-env` at render time (`[annotations]` ignored, image entrypoint skipped unless `entrypoint = true`) |
 | `--opentela-service-name` | `llm` | service a job advertises; the [GPU pool](gpu-pool.md) uses `pool` |
