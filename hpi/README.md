@@ -6,7 +6,7 @@ whose defaults are upstream behaviour, so `git merge upstream/main` stays clean.
 | Item | Value |
 | --- | --- |
 | Login node | `rx02` |
-| Slurm | account `aisc-staff`, partition `aisc-batch`, nodes are shared (`--gres`, no `--exclusive`), `ga03` is aarch64 (excluded) |
+| Slurm | account `aisc-staff`, partition `pot-hpi-aisc-batch` (was `aisc-batch` until Sep 2026), nodes are shared (`--gres`, no `--exclusive`), `ga03` is aarch64 (excluded) |
 | OpenTela head | k8s, namespace `litellm`, peer `QmWBnedcUEawmdTQTXgyY6BAQFDMwiUDndmRqgGkRBY4Qr`, reached via wstunnel to `otela-head.litellm.svc.cluster.local:43905` |
 | Tunnel | `wss://api.aisc.hpi.de:443`, path prefix `otela-<token>`; token in `~/otela-tunnel-token` (mode 600, **never in git**) |
 | Head HTTP API (inside k8s only) | `http://otela-head.litellm.svc.cluster.local:8092` |
@@ -99,7 +99,7 @@ The example is the `sml advanced` form of the reference `~/otela-worker.sbatch`.
 
 | Flag | Why |
 | --- | --- |
-| `--gres gpu:h100:1 --no-exclusive --cpus-per-task 8 --mem 48G` | shared nodes; `aisc-batch` also holds A30 (`gx17v1`) and L40 (`ga03`) nodes, so name the GPU type |
+| `--gres gpu:h100:1 --no-exclusive --cpus-per-task 8 --mem 48G` | shared nodes; `pot-hpi-aisc-batch` also holds A30 (`gx17v1`) and L40 (`ga03`) nodes, so name the GPU type |
 | `--container-spec pyxis` | the cluster's pyxis has no `--environment` (EDF) flag: the env toml is translated into `--container-image/--container-mounts/--container-workdir/--container-env`, image entrypoint skipped |
 | `--sbatch-arg=--exclude=ga03` | no arm64 binaries |
 | `--framework-port auto` | two jobs may share a node: port from `SLURM_JOB_ID` |

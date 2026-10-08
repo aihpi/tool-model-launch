@@ -1,4 +1,4 @@
-# Pyxis/enroot environment for vLLM on the HPI AISC cluster (aisc-batch, x86-64 H100 nodes).
+# Pyxis/enroot environment for vLLM on the HPI AISC cluster (pot-hpi-aisc-batch, x86-64 H100 nodes).
 # Paths must be absolute and visible from the compute nodes; see hpi/README.md.
 image = "/sc/projects/sci-aisc/aisc-share/images/vllm-openai.sqsh"
 
