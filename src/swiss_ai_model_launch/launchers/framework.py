@@ -709,7 +709,10 @@ def _render_enroot_data_path(launch_args: LaunchArgs) -> str:
         "}\n"
         "# Background: deleting an orphaned rootfs takes minutes on a parallel FS and\n"
         "# must not hold up the job; a next launch prunes again if this one is cut short.\n"
+        "# Disowned: the footer's `wait -n` must only see the critical srun steps, or the\n"
+        "# prune finishing would end the job.\n"
         'sml_prune_enroot "$sml_enroot_data" &\n'
+        "disown $!\n"
         'if [[ -d "$sml_enroot_link" && ! -L "$sml_enroot_link" ]]; then\n'
         '    sml_prune_enroot "$sml_enroot_link"\n'
         '    rmdir "$sml_enroot_link" 2>/dev/null \\\n'
