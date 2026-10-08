@@ -135,7 +135,29 @@ def _render_site_setup(launch_args: LaunchArgs) -> str:
             'case "$_sml_xtrace" in *x*) set -x ;; esac',
             "sleep 3",
         ]
+    if launch_args.hf_token_file:
+        token_file = _shell_path(launch_args.hf_token_file)
+        lines += [
+            "# Hugging Face token for gated models; xtrace off so its value stays out of the log.",
+            f"if [[ -r {token_file} ]]; then",
+            "    _sml_xtrace=$-",
+            "    { set +x; } 2>/dev/null",
+            f"    HF_TOKEN=$(< {token_file})",
+            "    export HF_TOKEN",
+            '    case "$_sml_xtrace" in *x*) set -x ;; esac',
+            "fi",
+        ]
     return "\n".join(lines)
+
+
+def _shell_path(path: str) -> str:
+    """Quote ``path`` for the rank scripts, keeping a leading ``~/`` meaning the
+    job user's home (quoting would freeze the tilde)."""
+    if path == "~":
+        return '"$HOME"'
+    if path.startswith("~/"):
+        return '"$HOME"/' + shlex.quote(path[2:])
+    return shlex.quote(path)
 
 
 def _opentela_labels(launch_args: LaunchArgs) -> str:

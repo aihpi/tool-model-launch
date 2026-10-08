@@ -15,7 +15,7 @@ from typing import Any, cast
 import firecrest as f7t
 
 from swiss_ai_model_launch import site
-from swiss_ai_model_launch.cli import recipes
+from swiss_ai_model_launch.cli import hf_token, recipes
 from swiss_ai_model_launch.cli.configuration import InitConfig, optional_value
 from swiss_ai_model_launch.cli.configuration.models import (
     ChainConfiguration,
@@ -410,6 +410,16 @@ def _add_advanced_launch_arguments(
         ),
     )
     advanced_parser.add_argument(
+        "--hf-token-file",
+        dest="hf_token_file",
+        default=os.environ.get("SML_HF_TOKEN_FILE") or None,
+        metavar="PATH",
+        help=(
+            "File (readable inside the job) with a Hugging Face token for gated models, exported as "
+            "HF_TOKEN without entering scripts or logs (env: SML_HF_TOKEN_FILE; `sml init` fills it)."
+        ),
+    )
+    advanced_parser.add_argument(
         "--tunnel-url",
         dest="tunnel_url",
         default=None,
@@ -551,6 +561,7 @@ async def _run_initial_configuration_wizard(args: argparse.Namespace) -> None:
     config = InitConfig()
     await config.aconfigure(args=args)
     config.save()
+    await hf_token.configure_from_env()
     print("SML is configured and ready to use! Please restart the program.")
 
 
@@ -999,6 +1010,7 @@ def build_launch_args_from_advanced(
         tunnel_target=getattr(args, "tunnel_target", None),
         container_spec=getattr(args, "container_spec", CONTAINER_SPEC_EDF),
         enroot_data_path=getattr(args, "enroot_data_path", None),
+        hf_token_file=getattr(args, "hf_token_file", None),
     )
 
 

@@ -19,7 +19,7 @@ A ready-made install lives in the project share; every AISC staff member can use
 
 ```bash
 source /sc/projects/sci-aisc/aisc-share/sml/env.sh   # puts `sml` on PATH with the HPI defaults
-sml init                                              # once: asks only for your LiteLLM key
+sml init                                              # once: LiteLLM key, optional HF token
 sml recipes                                           # what can be launched
 sml advanced --recipe qwen3-0.6b                      # launch one
 ```
@@ -73,8 +73,12 @@ when setting up a new site or shared directory.
    it never appears in scripts, labels or `squeue`.
 
 5. **sml**: `source hpi/sml.env`, then `sml init`. The launcher is preselected (`SML_LAUNCHER`),
-   so it only asks for your LiteLLM API key: one for `https://api.aisc.hpi.de` with the
-   `otela-test` access group. `sml.env` also renames the TUI and prompts to "HPI AISC".
+   so it asks for your LiteLLM API key (one for `https://api.aisc.hpi.de` with the `otela-test`
+   access group) and, optionally, a Hugging Face read token for gated models such as Llama or
+   Gemma (accept the model's license on the Hub first). The HF token goes to
+   `~/.sml/hf-token` (mode 600, `SML_HF_TOKEN_FILE`); jobs export it as `HF_TOKEN` with tracing
+   off. Re-run `sml init` to change either. `sml.env` also renames the TUI and prompts to
+   "HPI AISC".
 
 ## Launch with a recipe
 

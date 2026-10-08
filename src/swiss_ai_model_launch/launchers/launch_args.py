@@ -151,6 +151,10 @@ class LaunchArgs(BaseModel):
     # small home quotas master.sh points that directory here (a symlink) and
     # prunes rootfs of jobs Slurm no longer knows. None: leave pyxis alone.
     enroot_data_path: str | None = None
+    # File (readable inside the job) holding a Hugging Face token for gated models.
+    # The rank scripts export it as HF_TOKEN with xtrace off; its content never
+    # enters scripts, labels or logs. A missing file is skipped. None: no token.
+    hf_token_file: str | None = None
 
     @model_validator(mode="after")
     def _validate(self) -> "LaunchArgs":
