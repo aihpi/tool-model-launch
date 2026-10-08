@@ -14,6 +14,8 @@ from swiss_ai_model_launch.launchers.launch_args import LaunchArgs
 from swiss_ai_model_launch.launchers.topology import Topology
 
 _HAS_SHELLCHECK = shutil.which("shellcheck") is not None
+# Most tests use a fictional --config path; the missing-catalog warning is tested on its own.
+pytestmark = pytest.mark.filterwarnings("ignore:pool config .* no pool_models label:UserWarning")
 
 
 def _make_args(**overrides: Any) -> LaunchArgs:
@@ -73,3 +75,44 @@ def test_pool_scripts_pass_shellcheck(tmp_path: Path) -> None:
         path.write_text(("#!/bin/bash\n" if filename == "master.sh" else "") + out[filename])
         r = subprocess.run(["shellcheck", "-S", "warning", str(path)], capture_output=True)
         assert r.returncode == 0, f"shellcheck failed for {filename}:\n{r.stdout.decode()}"
+
+
+# ── pool_models label: the catalog on the mesh ───────────────────────────────
+
+
+def _write_catalog(path: Path) -> None:
+    path.write_text(
+        'sleep_after = "5m"\n'
+        '[[models]]\nserved_name = "alice/Qwen/Qwen3-0.6B"\ngpus = [0]\ngpu_fraction = 0.45\n'
+        '[[models]]\nserved_name = "alice/Qwen/Qwen3-8B"\ngpus = [0]\ngpu_fraction = 0.45\n'
+    )
+
+
+@pytest.mark.parametrize("form", ["--config {}", "--config={}"])
+def test_pool_advertises_its_catalog(tmp_path: Path, form: str) -> None:
+    catalog = tmp_path / "pool.toml"
+    _write_catalog(catalog)
+    head = render_rank_scripts(_make_args(framework_args=form.format(catalog)))["head.sh"]
+    assert "--label pool_models=alice/Qwen/Qwen3-0.6B,alice/Qwen/Qwen3-8B" in head
+
+
+def test_pool_catalog_path_with_tilde(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _write_catalog(tmp_path / "pool.toml")
+    head = render_rank_scripts(_make_args(framework_args="--config ~/pool.toml"))["head.sh"]
+    assert "pool_models=alice/Qwen/Qwen3-0.6B," in head
+
+
+def test_unreadable_catalog_means_no_label_and_a_warning(tmp_path: Path) -> None:
+    with pytest.warns(UserWarning, match="no pool_models label"):
+        head = render_rank_scripts(_make_args(framework_args=f"--config {tmp_path / 'absent.toml'}"))["head.sh"]
+    assert "pool_models" not in head
+
+
+def test_only_the_pool_gets_the_label(tmp_path: Path) -> None:
+    catalog = tmp_path / "pool.toml"
+    _write_catalog(catalog)
+    head = render_rank_scripts(
+        _make_args(framework="vllm", framework_args=f"--served-model-name alice/pool --config {catalog}")
+    )["head.sh"]
+    assert "pool_models" not in head

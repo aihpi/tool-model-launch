@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import shlex
+import warnings
 from importlib.resources import files
 from pathlib import Path
 from typing import ClassVar
@@ -171,6 +172,12 @@ def _opentela_labels(launch_args: LaunchArgs) -> str:
         f"served_model_name={launch_args.served_model_name}",
         f"framework_args={framework_args_normalised}",
     ]
+    if launch_args.framework == Pool.name:
+        catalog = _pool_catalog(launch_args)
+        if catalog:
+            # The pool's served names, so whoever reads the mesh table (a LiteLLM
+            # reconciler) can register one row per model without asking the node.
+            user_input.append(f"pool_models={','.join(catalog)}")
     quoted = " \\\n".join(f"    --label {shlex.quote(kv)}" for kv in user_input)
     # shlex.quote single-quotes the label, which would freeze "$FRAMEWORK_PORT"
     # as text when the port is "auto"; splice the expansion back in.
@@ -185,6 +192,27 @@ def _opentela_labels(launch_args: LaunchArgs) -> str:
         "    --label started_at=$(date -u +%FT%TZ) \\\n"
         f'    --label expires_at=$(date -u -d "+{seconds} seconds" +%FT%TZ) \\\n'
     )
+
+
+def _pool_catalog(launch_args: LaunchArgs) -> list[str] | None:
+    """Served names in the pool TOML named by ``--config`` in framework_args, read
+    at render time (the login node shares the home with the job). None, with a
+    warning, when there is no readable config: the label is informational."""
+    words = shlex.split(launch_args.framework_args)
+    path = None
+    for i, word in enumerate(words):
+        if word == "--config" and i + 1 < len(words):
+            path = words[i + 1]
+        elif word.startswith("--config="):
+            path = word.split("=", 1)[1]
+    if path is None:
+        return None
+    try:
+        raw = tomllib.loads(Path(path).expanduser().read_text())
+        return [str(m["served_name"]) for m in raw.get("models", [])]
+    except (OSError, tomllib.TOMLDecodeError, KeyError, TypeError) as exc:
+        warnings.warn(f"pool config {path} not readable at render time ({exc}); no pool_models label", stacklevel=2)
+        return None
 
 
 def _resolve_opentela_bootstrap_addr(launch_args: LaunchArgs) -> str:
