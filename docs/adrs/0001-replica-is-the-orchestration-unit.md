@@ -56,4 +56,4 @@ A **replica** is one independent inference engine instance — one framework pro
 
 ## Related
 
-- The framework HTTP port is hardcoded to 8080 across the system to make `curl http://<replica-ip>:8080/...` work predictably regardless of framework or job. This decision underlies the multi-process-per-node restriction above.
+- The framework HTTP port defaults to 8080 across the system to make `curl http://<replica-ip>:8080/...` work predictably regardless of framework or job. This decision underlies the multi-process-per-node restriction above. Clusters that share nodes between jobs pass `--framework-port auto`; the scripts then derive one port per job from `SLURM_JOB_ID` and every consumer (framework `--port`, OpenTela `--service.port`, router worker URLs, health checker) reads the same shell variable, so the three still cannot drift.

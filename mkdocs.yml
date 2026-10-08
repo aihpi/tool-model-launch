@@ -21,6 +21,7 @@ nav:
       - Interactive (sml): usage-sml.md
       - Advanced (sml advanced): usage-advanced.md
       - Porting a Raw Command: porting-commands.md
+      - GPU Pool (sleep mode): gpu-pool.md
   - Performance:
       - Sizing a Model: sizing.md
       - Benchmarking: benchmarking.md
@@ -29,6 +30,7 @@ nav:
   - Architecture: architecture.md
   - ADRs:
       - Replica is the Orchestration Unit: adrs/0001-replica-is-the-orchestration-unit.md
+      - GPU Pool with Sleep Mode: adrs/0002-gpu-pool-sleep-mode.md
   - Developers:
       - Development: development.md
       - Adding a New Model: adding-models.md

@@ -6,6 +6,7 @@ import importlib.metadata
 import logging
 import os
 import re
+import shlex
 import sys
 from collections.abc import Awaitable, Callable, Coroutine
 from pathlib import Path
@@ -13,6 +14,8 @@ from typing import Any, cast
 
 import firecrest as f7t
 
+from swiss_ai_model_launch import site
+from swiss_ai_model_launch.cli import hf_token, recipes
 from swiss_ai_model_launch.cli.configuration import InitConfig, optional_value
 from swiss_ai_model_launch.cli.configuration.models import (
     ChainConfiguration,
@@ -30,12 +33,15 @@ from swiss_ai_model_launch.launchers.firecrest_auth import build_client
 from swiss_ai_model_launch.launchers.framework import OPENTELA_BOOTSTRAP_ADDR_DEV, render_master, render_rank_scripts
 from swiss_ai_model_launch.launchers.job_status import JobStatus
 from swiss_ai_model_launch.launchers.launch_args import (
+    CONTAINER_SPEC_EDF,
     DEFAULT_MAX_JOB_TIME,
+    FRAMEWORK_PORT,
+    FRAMEWORK_PORT_AUTO,
     ROUTER_OPENTELA,
     ROUTER_SGLANG,
-    TELEMETRY_ENDPOINT,
     LaunchArgs,
     RouterMode,
+    telemetry_endpoint,
     time_str_to_seconds,
 )
 from swiss_ai_model_launch.launchers.launch_request import LaunchRequest
@@ -165,6 +171,15 @@ def _make_launch_request_config(
     )
 
 
+def _parse_framework_port(value: str) -> int | str:
+    if value == FRAMEWORK_PORT_AUTO:
+        return value
+    try:
+        return int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a port number or 'auto', got {value!r}") from None
+
+
 def _add_advanced_launch_arguments(
     advanced_parser: argparse.ArgumentParser,
     *,
@@ -176,12 +191,29 @@ def _add_advanced_launch_arguments(
         required=True,
         help="Inference framework to use (e.g. sglang, vllm).",
     )
+    default_environment = os.environ.get("SML_ENVIRONMENT") or None
     advanced_parser.add_argument(
         "--environment",
         dest="slurm_environment",
-        required=True,
+        default=default_environment,
+        required=default_environment is None,
         metavar="PATH",
-        help="Local path to the environment .toml file.",
+        help="Local path to the environment .toml file (env: SML_ENVIRONMENT).",
+    )
+    # Consumed by recipes.expand_argv before parsing; declared here for --help and
+    # so that one written inside an @file is reported instead of ignored.
+    advanced_parser.add_argument(
+        "--recipe",
+        dest="recipe_in_file",
+        default=None,
+        metavar="NAME",
+        help="Read flags from recipe NAME on SML_RECIPE_PATH (or a path); see `sml recipes`.",
+    )
+    advanced_parser.add_argument(
+        "--no-site-args",
+        dest="no_site_args_in_file",
+        action="store_true",
+        help="Do not prepend the site flags file (SML_SITE_ARGS).",
     )
     advanced_parser.add_argument(
         "--framework-args",
@@ -255,6 +287,45 @@ def _add_advanced_launch_arguments(
         help="SLURM reservation name (optional, env: SML_RESERVATION).",
     )
     advanced_parser.add_argument(
+        "--gres",
+        dest="gres",
+        default=None,
+        metavar="SPEC",
+        help="SLURM --gres request, e.g. gpu:4 (default: none). Needed on shared-node clusters.",
+    )
+    advanced_parser.add_argument(
+        "--cpus-per-task",
+        dest="cpus_per_task",
+        type=int,
+        default=None,
+        metavar="N",
+        help="SLURM --cpus-per-task (default: scheduler default).",
+    )
+    advanced_parser.add_argument(
+        "--mem",
+        dest="mem",
+        default=None,
+        metavar="SIZE",
+        help="SLURM --mem per node, e.g. 48G (default: scheduler default).",
+    )
+    advanced_parser.add_argument(
+        "--no-exclusive",
+        dest="exclusive",
+        action="store_false",
+        help="Do not request whole nodes (#SBATCH --exclusive). Combine with --gres on shared-node clusters.",
+    )
+    advanced_parser.add_argument(
+        "--sbatch-arg",
+        dest="sbatch_args",
+        action="append",
+        default=[],
+        metavar="ARG",
+        help=(
+            "Extra #SBATCH option appended verbatim; repeatable. Write it with '=' "
+            "so argparse does not read it as a flag: --sbatch-arg=--exclude=node01."
+        ),
+    )
+    advanced_parser.add_argument(
         "--served-model-name",
         dest="served_model_name",
         default=None,
@@ -289,13 +360,88 @@ def _add_advanced_launch_arguments(
     advanced_parser.add_argument(
         "--opentela-bootstrap-addr",
         dest="opentela_bootstrap_addr",
-        default=None,
+        default=os.environ.get("SML_OPENTELA_BOOTSTRAP_ADDR") or None,
         metavar="MULTIADDR",
         help=(
             "Override the OpenTela bootstrap multiaddr "
-            "(e.g. /ip4/<host>/tcp/<port>/p2p/<peer-id>). "
+            "(e.g. /ip4/<host>/tcp/<port>/p2p/<peer-id>; env: SML_OPENTELA_BOOTSTRAP_ADDR). "
+            "With --tunnel-url a bare peer ID is accepted and reached through the tunnel. "
             "Takes precedence over --dev. Defaults to the prod peer."
         ),
+    )
+    advanced_parser.add_argument(
+        "--opentela-service-name",
+        dest="opentela_service_name",
+        default="llm",
+        metavar="NAME",
+        help="OpenTela service the job advertises (default: llm).",
+    )
+    advanced_parser.add_argument(
+        "--framework-port",
+        dest="framework_port",
+        type=_parse_framework_port,
+        default=FRAMEWORK_PORT,
+        metavar="PORT|auto",
+        help=(
+            f"Framework HTTP port (default: {FRAMEWORK_PORT}). 'auto' derives a per-job port "
+            "from SLURM_JOB_ID at run time, for clusters where nodes are shared between jobs."
+        ),
+    )
+    advanced_parser.add_argument(
+        "--container-spec",
+        dest="container_spec",
+        choices=("edf", "pyxis"),
+        default=os.environ.get("SML_CONTAINER_SPEC") or CONTAINER_SPEC_EDF,
+        help=(
+            "How the env toml reaches srun (default: edf, env: SML_CONTAINER_SPEC). 'edf' passes it to "
+            "pyxis' --environment flag (CSCS); 'pyxis' translates it into stock --container-* flags for "
+            "clusters whose pyxis has no EDF support."
+        ),
+    )
+    advanced_parser.add_argument(
+        "--enroot-data-path",
+        dest="enroot_data_path",
+        default=os.environ.get("SML_ENROOT_DATA_PATH") or None,
+        metavar="DIR",
+        help=(
+            "Where pyxis may unpack container rootfs (env: SML_ENROOT_DATA_PATH). master.sh points "
+            "~/.local/share/enroot there and removes rootfs of jobs Slurm no longer knows; $USER/$HOME "
+            "expand on the batch node. Default: leave pyxis' own location."
+        ),
+    )
+    advanced_parser.add_argument(
+        "--hf-token-file",
+        dest="hf_token_file",
+        default=os.environ.get("SML_HF_TOKEN_FILE") or None,
+        metavar="PATH",
+        help=(
+            "File (readable inside the job) with a Hugging Face token for gated models, exported as "
+            "HF_TOKEN without entering scripts or logs (env: SML_HF_TOKEN_FILE; `sml init` fills it)."
+        ),
+    )
+    advanced_parser.add_argument(
+        "--tunnel-url",
+        dest="tunnel_url",
+        default=None,
+        metavar="URL",
+        help=(
+            "wstunnel server (e.g. wss://gateway.example.org:443) used to reach an OpenTela "
+            "head that is not directly routable. Requires --tunnel-token-file and --tunnel-target."
+        ),
+    )
+    advanced_parser.add_argument(
+        "--tunnel-token-file",
+        dest="tunnel_token_file",
+        default=None,
+        metavar="PATH",
+        help="File (readable inside the job) holding the tunnel token; its content never enters scripts or logs.",
+    )
+    advanced_parser.add_argument(
+        "--tunnel-target",
+        dest="tunnel_target",
+        default=None,
+        metavar="HOST:PORT",
+        help="Remote endpoint the tunnel forwards to, e.g. otela-head.litellm.svc.cluster.local:43905.",
     )
     advanced_parser.add_argument(
         "--dev",
@@ -344,10 +490,25 @@ def _add_advanced_launch_arguments(
     )
 
 
+class _ArgumentParser(argparse.ArgumentParser):
+    """argparse with @file support that reads shell-style lines: several flags per
+    line, quoted values (``--framework-args "--model x"``), blank lines and ``#``
+    comments. argparse's default takes one whole line as one argument."""
+
+    def convert_arg_line_to_args(self, arg_line: str) -> list[str]:
+        return shlex.split(arg_line, comments=True)
+
+
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _ArgumentParser(
         prog="sml",
-        description="Swiss AI Model Launcher",
+        description=f"{site.SITE_NAME} Model Launcher",
+        # `sml advanced @recipe.args` reads flags from a file (see hpi/recipes).
+        fromfile_prefix_chars="@",
+        epilog=(
+            "Flags can be read from a file: sml advanced @recipe.args (one or more flags per line, # comments), "
+            "or by name: sml advanced --recipe NAME (see `sml recipes`)."
+        ),
     )
     _meta = importlib.metadata.metadata("swiss-ai-model-launch")
     parser.add_argument(
@@ -391,6 +552,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     subparsers.add_parser("mcp", help="Start the SML MCP server")
+    subparsers.add_parser("recipes", help="List the launch recipes on SML_RECIPE_PATH")
 
     return parser
 
@@ -399,6 +561,7 @@ async def _run_initial_configuration_wizard(args: argparse.Namespace) -> None:
     config = InitConfig()
     await config.aconfigure(args=args)
     config.save()
+    await hf_token.configure_from_env()
     print("SML is configured and ready to use! Please restart the program.")
 
 
@@ -592,7 +755,7 @@ async def _create_launcher(
             Launcher,
             await _get_firecrest_launcher_with_client(
                 firecrest_client,
-                telemetry_endpoint=TELEMETRY_ENDPOINT,
+                telemetry_endpoint=telemetry_endpoint(),
                 args=args,
                 non_interactive=non_interactive,
                 ssh_host_override=ssh_host_override,
@@ -602,7 +765,7 @@ async def _create_launcher(
         return cast(
             Launcher,
             await _get_slurm_launcher(
-                telemetry_endpoint=TELEMETRY_ENDPOINT,
+                telemetry_endpoint=telemetry_endpoint(),
                 args=args,
                 non_interactive=non_interactive,
             ),
@@ -835,6 +998,19 @@ def build_launch_args_from_advanced(
         disable_dcgm_exporter=args.disable_dcgm_exporter,
         disable_metrics=args.disable_metrics,
         telemetry_endpoint=telemetry_endpoint,
+        exclusive=getattr(args, "exclusive", True),
+        gres=getattr(args, "gres", None),
+        cpus_per_task=getattr(args, "cpus_per_task", None),
+        mem=getattr(args, "mem", None),
+        sbatch_args=list(getattr(args, "sbatch_args", None) or []),
+        framework_port=getattr(args, "framework_port", FRAMEWORK_PORT),
+        opentela_service_name=getattr(args, "opentela_service_name", "llm"),
+        tunnel_url=getattr(args, "tunnel_url", None),
+        tunnel_token_file=getattr(args, "tunnel_token_file", None),
+        tunnel_target=getattr(args, "tunnel_target", None),
+        container_spec=getattr(args, "container_spec", CONTAINER_SPEC_EDF),
+        enroot_data_path=getattr(args, "enroot_data_path", None),
+        hf_token_file=getattr(args, "hf_token_file", None),
     )
 
 
@@ -852,7 +1028,7 @@ async def _run_advanced(args: argparse.Namespace) -> None:
         username=launcher.username,
         account=launcher.account,
         partition=launcher.partition,
-        telemetry_endpoint=TELEMETRY_ENDPOINT,
+        telemetry_endpoint=telemetry_endpoint(),
     )
 
     # Decide single vs. consecutive chain. --time is the total uptime; a job is
@@ -966,14 +1142,27 @@ async def _main(args: argparse.Namespace) -> None:
         )
 
 
+def _parse_cli(parser: argparse.ArgumentParser, argv: list[str]) -> argparse.Namespace:
+    try:
+        expanded = recipes.expand_argv(argv)
+    except recipes.RecipeError as exc:
+        parser.error(str(exc))
+    args = parser.parse_args(expanded)
+    if getattr(args, "recipe_in_file", None) is not None or getattr(args, "no_site_args_in_file", False):
+        parser.error("--recipe and --no-site-args work on the command line only, not inside an @file.")
+    return args
+
+
 def main() -> None:
     parser = _build_parser()
-    args = parser.parse_args()
+    args = _parse_cli(parser, sys.argv[1:])
     if args.subcommand is None:
         default = "preconfigured" if InitConfig.exists() else "init"
         args = parser.parse_args([default])
     if args.subcommand == "mcp":
         _run_mcp()
+    elif args.subcommand == "recipes":
+        print(recipes.format_recipe_table(recipes.list_recipes(recipes.recipe_dirs())))
     else:
         asyncio.run(_main(args))
 

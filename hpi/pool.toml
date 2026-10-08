@@ -1,0 +1,34 @@
+# GPU pool catalog for `sml advanced --framework pool` (see docs/gpu-pool.md).
+# All models are loaded at boot and put to sleep (weights in host RAM); a request
+# wakes its model in seconds, evicting least-recently-used awake models until the
+# GPU fractions fit. Size the job's --mem for the sum of all weights (+20 %).
+
+sleep_after = "5m"     # awake and idle this long → back to sleep
+sleep_level = 1        # weights → host RAM (level 2 is not supported yet)
+gpu_headroom = 0.05    # Σ gpu_fraction of awake models per GPU ≤ 1 − headroom
+drain_timeout = "10m"  # max wait for in-flight requests before sleeping a model
+start_timeout = "30m"  # max wait for a fresh vLLM process to become healthy
+
+# served_name must equal LiteLLM's `model` without the hosted_vllm/ prefix, i.e.
+# <slurm user>/<vendor>/<model>; `model` is what `vllm serve` loads.
+
+[[models]]
+served_name = "<user>/Qwen/Qwen3-0.6B"
+model = "Qwen/Qwen3-0.6B"
+gpus = [0]
+gpu_fraction = 0.45
+args = "--max-model-len 32768"
+
+[[models]]
+served_name = "<user>/Qwen/Qwen3-8B"
+model = "Qwen/Qwen3-8B"
+gpus = [0]
+gpu_fraction = 0.45
+args = "--max-model-len 32768"
+
+[[models]]
+served_name = "<user>/Qwen/Qwen3-32B"
+model = "Qwen/Qwen3-32B"
+gpus = [0]
+gpu_fraction = 0.9
+args = "--max-model-len 16384"

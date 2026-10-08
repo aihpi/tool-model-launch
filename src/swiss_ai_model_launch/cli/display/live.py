@@ -20,6 +20,7 @@ from textual.binding import Binding
 from textual.widgets import Footer, Header, Label, TabbedContent, TabPane, TextArea
 from textual.worker import Worker, WorkerState
 
+from swiss_ai_model_launch import site
 from swiss_ai_model_launch.cli.display.state import DisplayState
 from swiss_ai_model_launch.cli.healthcheck import ModelHealth, ReplicaHealth, ReplicaHealthReport
 from swiss_ai_model_launch.launchers.job_status import JobStatus
@@ -280,7 +281,7 @@ def _terminal_targets(state: DisplayState) -> dict[int, tuple[int, str]]:
 
 
 class _SMLApp(App[bool]):
-    TITLE = "SwissAI Model Launch"
+    TITLE = site.APP_TITLE
     ALLOW_SELECT = True
     BINDINGS = [
         Binding("ctrl+x", "quit_resume", "Quit and Resume", priority=True),

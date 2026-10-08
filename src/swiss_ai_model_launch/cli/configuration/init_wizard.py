@@ -5,6 +5,7 @@ from typing import Any, cast
 import yaml
 from pydantic import Field
 
+from swiss_ai_model_launch import site
 from swiss_ai_model_launch.cli.configuration.models import (
     BranchConfiguration,
     ChainConfiguration,
@@ -50,6 +51,8 @@ class InitConfig(ChainConfiguration):
                     head_configuration=OptionsConfiguration(
                         name="launcher",
                         prompt="How should jobs be submitted?",
+                        # A site with one launcher sets SML_LAUNCHER and the question is skipped.
+                        env_var="SML_LAUNCHER",
                         options={
                             "firecrest": (
                                 "FirecREST",
@@ -111,11 +114,8 @@ class InitConfig(ChainConfiguration):
                 ),
                 PasswordConfiguration(
                     name="swissai_research_api_key",
-                    prompt="What is your Swiss AI Research API Key?",
-                    intro=(
-                        "\nThe Swiss AI Research API Key is used for health checks against your served model.\n"
-                        "Get one at: https://serving.swissai.svc.cscs.ch  (log in -> View API Keys)\n"
-                    ),
+                    prompt=site.HEALTH_KEY_PROMPT,
+                    intro=site.HEALTH_KEY_INTRO,
                     env_var="SML_SWISSAI_RESEARCH_API_KEY",
                     expose_as_arg=False,
                 ),

@@ -1,0 +1,168 @@
+# HPI AISC cluster
+
+Everything HPI-specific lives in this folder; `src/` only carries generic options
+whose defaults are upstream behaviour, so `git merge upstream/main` stays clean.
+
+| Item | Value |
+| --- | --- |
+| Login node | `rx02` |
+| Slurm | account `aisc-staff`, partition `pot-hpi-aisc-batch` (was `aisc-batch` until Sep 2026), nodes are shared (`--gres`, no `--exclusive`), `ga03` is aarch64 (excluded) |
+| OpenTela head | k8s, namespace `litellm`, peer `QmWBnedcUEawmdTQTXgyY6BAQFDMwiUDndmRqgGkRBY4Qr`, reached via wstunnel to `otela-head.litellm.svc.cluster.local:43905` |
+| Tunnel | `wss://api.aisc.hpi.de:443`, path prefix `otela-<token>`; token in `~/otela-tunnel-token` (mode 600, **never in git**) |
+| Head HTTP API (inside k8s only) | `http://otela-head.litellm.svc.cluster.local:8092` |
+| Binaries | OpenTela `v0.2.4` (`otela-amd64`), wstunnel `v10.7.1` |
+| Runbook of the underlying setup | `docs/opentela-slurm.md` in `aihpi/litellm-k8s` |
+
+## Shared install (no clone needed)
+
+A ready-made install lives in the project share; every AISC staff member can use it:
+
+```bash
+source /sc/projects/sci-aisc/aisc-share/sml/env.sh   # puts `sml` on PATH with the HPI defaults
+sml init                                              # once: LiteLLM key, optional HF token
+sml recipes                                           # what can be launched
+sml advanced --recipe qwen3-0.6b                      # launch one
+```
+
+`/sc/projects/sci-aisc/aisc-share/sml/bin/sml` also works without sourcing anything. The install
+is a clone of this branch (`$SML_HOME/src`) with its own venv; update it with
+`git -C $SML_HOME/src pull && (cd $SML_HOME/src && uv sync)`. The steps below are only needed
+when setting up a new site or shared directory.
+
+## One-time setup
+
+1. **Shared directory** (absolute path, readable from compute nodes; replace `/PATH/TO/aisc-share` in
+   [`envs/vllm_hpi.toml`](envs/vllm_hpi.toml)):
+
+   ```text
+   aisc-share/
+     otela-share/prod/otela-amd64       # OpenTela v0.2.4
+     otela-share/prod/wstunnel-amd64    # wstunnel v10.7.1
+     images/vllm-openai.sqsh            # see below
+     hf-cache/                          # HF_HOME
+     vllm-cache/                        # VLLM_CACHE_ROOT
+     enroot-data/<user>/                # pyxis container rootfs (see step 3)
+   ```
+
+   The layout mirrors upstream's `/opentelabin/{prod,dev}/otela-<arch>`, which the launch
+   scripts resolve at run time.
+
+2. **Container image**: import the vLLM image matching the version you validated with the venv
+   (vLLM >= 0.28):
+
+   ```bash
+   enroot import -o /PATH/TO/aisc-share/images/vllm-openai.sqsh docker://vllm/vllm-openai:<tag>
+   ```
+
+3. **Keep pyxis out of home** (automatic): pyxis unpacks every container rootfs into
+   `~/.local/share/enroot` (~30 GB per running vLLM job against the 200 GB home quota) and
+   ignores `ENROOT_DATA_PATH` from the job environment. With `SML_ENROOT_DATA_PATH` from
+   `sml.env` (or `--enroot-data-path`), every job's `master.sh` turns that directory into a
+   symlink to `aisc-share/enroot-data/$USER` and removes rootfs left behind by jobs Slurm no
+   longer knows, before the first `srun`. Nothing to do per user; if `~/.local/share/enroot`
+   already holds a *running* job's rootfs the job only warns and retries next time.
+   Pyxis' own end-of-job removal does not finish on this filesystem (the step teardown cuts
+   it short), so expect one 15–30 GB rootfs per finished job under `enroot-data/<user>/`
+   until that user's next launch prunes it; the prune runs in the background and does not
+   delay the start. Shared dirs are group `aisc-storage`, setgid and group-writable.
+   The env toml mounts `hf-cache/` and `vllm-cache/` and sets `HF_HOME` / `VLLM_CACHE_ROOT` to
+   them, so weights and torch.compile caches stay out of home as well. Those three shared
+   directories must be group-writable for everyone who launches (`chmod g+ws`).
+
+4. **Token**: `~/otela-tunnel-token` on the Slurm home, mode 600. The job reads it at run time;
+   it never appears in scripts, labels or `squeue`.
+
+5. **sml**: `source hpi/sml.env`, then `sml init`. The launcher is preselected (`SML_LAUNCHER`),
+   so it asks for your LiteLLM API key (one for `https://api.aisc.hpi.de` with the `otela-test`
+   access group) and, optionally, a Hugging Face read token for gated models such as Llama or
+   Gemma (accept the model's license on the Hub first). The HF token goes to
+   `~/.sml/hf-token` (mode 600, `SML_HF_TOKEN_FILE`); jobs export it as `HF_TOKEN` with tracing
+   off. Re-run `sml init` to change either. `sml.env` also renames the TUI and prompts to
+   "HPI AISC".
+
+## Launch with a recipe
+
+A recipe is a small `*.args` file with the flags that differ per model (shell-style lines,
+`#` comments). `hpi/sml.env` sets three variables so nothing else is needed:
+
+| Variable | Value | Effect |
+| --- | --- | --- |
+| `SML_SITE_ARGS` | `hpi/recipes/_site.args` | site constants (pyxis, tunnel, ports, exclusions), prepended to every `sml advanced` |
+| `SML_ENVIRONMENT` | `hpi/envs/vllm_hpi.toml` | default `--environment` |
+| `SML_RECIPE_PATH` | `~/.sml/recipes`, `/sc/projects/sci-aisc/aisc-share/recipes`, `hpi/recipes` | where `--recipe NAME` looks, first hit wins |
+
+```bash
+sml recipes                                  # list, with the file each name comes from
+sml advanced --recipe qwen3-0.6b             # launch
+sml advanced --recipe qwen3-0.6b --mem 64G   # flags after the recipe override it
+sml advanced @~/somewhere/my-model.args      # any file works too
+```
+
+**Your own model:** copy `hpi/recipes/qwen3-0.6b.args` to `~/.sml/recipes/<name>.args`, change
+`--model` (a Hub id, or an absolute path to an HF-format checkpoint under
+`/sc/projects/sci-aisc/aisc-share`), `--served-model-name`, `--mem` and `--time`, then
+`sml advanced --recipe <name>`. The first comment line is what `sml recipes` shows. To share it,
+put it into `/sc/projects/sci-aisc/aisc-share/recipes/`. `--no-site-args` launches without the site
+file (for non-HPI flags). `pool.args` launches the [GPU pool](#gpu-pool-many-models-on-one-h100).
+
+## Launch
+
+```bash
+source hpi/sml.env
+sml advanced --recipe qwen3-0.6b      # or: bash hpi/examples/qwen3-0.6b-vllm.sh (same thing)
+```
+
+The site file plus `qwen3-0.6b.args` are the `sml advanced` form of the reference
+`~/otela-worker.sbatch`. What the flags do:
+
+| Flag | Why |
+| --- | --- |
+| `--gres gpu:h100:1 --no-exclusive --cpus-per-task 8 --mem 48G` | shared nodes; `pot-hpi-aisc-batch` also holds A30 (`gx17v1`) and L40 (`ga03`) nodes, so name the GPU type |
+| `--container-spec pyxis` | the cluster's pyxis has no `--environment` (EDF) flag: the env toml is translated into `--container-image/--container-mounts/--container-workdir/--container-env`, image entrypoint skipped |
+| `--sbatch-arg=--exclude=ga03` | no arm64 binaries |
+| `--framework-port auto` | two jobs may share a node: the framework, OpenTela HTTP/libp2p and tunnel ports all derive from `SLURM_JOB_ID` |
+| `--tunnel-url/--tunnel-token-file/--tunnel-target` | wstunnel to the head; the bootstrap addr from `sml.env` is a bare peer ID reached through it |
+| `--disable-metrics --disable-dcgm-exporter` | no Prometheus pipeline here |
+
+Every OpenTela peer also gets `--bootstrap.static` (private mesh: never the public eth-easl
+bootstrap servers), a per-step `--config-dir` and a deterministic `--seed`, so `--replicas 2` gives
+two distinct peers even on a shared home.
+
+Dry run without submitting: append `--output-script /tmp/check` and read `master.sh` / `head.sh`.
+
+## Register in LiteLLM
+
+One row per served name (replicas are balanced by OpenTela, not LiteLLM), via the admin API, not
+`config.yaml`:
+
+```bash
+curl -s -X POST https://api.aisc.hpi.de/model/new \
+  -H "Authorization: Bearer $LITELLM_ADMIN_KEY" -H 'Content-Type: application/json' \
+  -d '{
+    "model_name": "hosted_vllm/<user>/Qwen/Qwen3-0.6B",
+    "litellm_params": {
+      "model": "hosted_vllm/<user>/Qwen/Qwen3-0.6B",
+      "api_base": "http://otela-head.litellm.svc.cluster.local:8092/v1/service/llm/v1"
+    },
+    "model_info": { "access_groups": ["otela-test"] }
+  }'
+```
+
+`<user>` is the Slurm username: sml namespaces every served name as `<user>/<vendor>/<model>`.
+
+## GPU pool: many models on one H100
+
+`hpi/pool.toml` + `hpi/examples/pool.sh` run one job that keeps every listed model resident but asleep and wakes the requested one in seconds ([docs/gpu-pool.md](../docs/gpu-pool.md)). Register each catalog model in LiteLLM with the **same** `api_base`, `http://otela-head.litellm.svc.cluster.local:8092/v1/service/pool/v1`, and `model: hosted_vllm/<served_name>`. Replace `<user>` in `pool.toml` with your Slurm username before submitting.
+
+## Verify
+
+1. Job log: wstunnel connected, `bootstrap_connected=true`, relay reservation on
+   `QmWBnedcUEaw…` only, health check passed.
+2. From the deploy host: the head's table holds the head plus our replicas, nothing else.
+
+   ```bash
+   kubectl -n litellm run curl-$RANDOM --rm -i --restart=Never --image=curlimages/curl:8.10.1 -- \
+     -s http://otela-head.litellm.svc:8092/v1/dnt/table | grep -o '"id":"[^"]*"'
+   ```
+
+3. A chat completion through LiteLLM answers; the `sml` health panel turns green.

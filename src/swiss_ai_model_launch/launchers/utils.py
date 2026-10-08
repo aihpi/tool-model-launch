@@ -76,25 +76,8 @@ def create_salt(length: int) -> str:
 
 
 def render_sbatch_header(launch_args: LaunchArgs, *, reservation: str | None = None) -> str:
-    lines = [
-        "#!/bin/bash",
-        f"#SBATCH --job-name={launch_args.job_name}",
-        f"#SBATCH --account={launch_args.account}",
-        f"#SBATCH --time={launch_args.time}",
-        "#SBATCH --exclusive",
-        f"#SBATCH --nodes={launch_args.total_nodes}",
-        f"#SBATCH --partition={launch_args.partition}",
-    ]
-    if reservation:
-        lines.append(f"#SBATCH --reservation={reservation}")
-    if launch_args.begin:
-        lines.append(f"#SBATCH --begin={launch_args.begin}")
-    if launch_args.dependency:
-        lines.append(f"#SBATCH --dependency={launch_args.dependency}")
-    lines += [
-        "#SBATCH --output=logs/%j/log.out",
-        "#SBATCH --error=logs/%j/log.err",
-    ]
+    # One source of truth: the header is the CLI form of to_sbatch_args().
+    lines = ["#!/bin/bash", *(f"#SBATCH {arg}" for arg in launch_args.to_sbatch_args(reservation=reservation))]
     return "\n".join(lines) + "\n"
 
 
